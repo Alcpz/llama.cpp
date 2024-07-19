@@ -1656,33 +1656,29 @@ namespace dpct
             Ts alpha_value = dpct::get_value(reinterpret_cast<const Ts *>(alpha), q);
             Ts beta_value = dpct::get_value(reinterpret_cast<const Ts *>(beta), q);
 
-            matrix_info_t *matrix_info =
-                (matrix_info_t *)std::malloc(sizeof(matrix_info_t));
-            matrix_info->transpose_info[0] = a_trans;
-            matrix_info->transpose_info[1] = b_trans;
-            matrix_info->value_info[0] = alpha_value;
-            matrix_info->value_info[1] = beta_value;
-            matrix_info->size_info[0] = m;
-            matrix_info->size_info[1] = n;
-            matrix_info->size_info[2] = k;
-            matrix_info->ld_info[0] = lda;
-            matrix_info->ld_info[1] = ldb;
-            matrix_info->ld_info[2] = ldc;
-            matrix_info->groupsize_info = batch_size;
+            matrix_info_t matrix_info;
+
+            matrix_info.transpose_info[0] = a_trans;
+            matrix_info.transpose_info[1] = b_trans;
+            matrix_info.value_info[0] = alpha_value;
+            matrix_info.value_info[1] = beta_value;
+            matrix_info.size_info[0] = m;
+            matrix_info.size_info[1] = n;
+            matrix_info.size_info[2] = k;
+            matrix_info.ld_info[0] = lda;
+            matrix_info.ld_info[1] = ldb;
+            matrix_info.ld_info[2] = ldc;
+            matrix_info.groupsize_info = batch_size;
 
             sycl::event e = oneapi::mkl::blas::column_major::gemm_batch(
-                q, matrix_info->transpose_info, matrix_info->transpose_info + 1,
-                matrix_info->size_info, matrix_info->size_info + 1,
-                matrix_info->size_info + 2, matrix_info->value_info,
-                reinterpret_cast<const Ta **>(a), matrix_info->ld_info,
-                reinterpret_cast<const Tb **>(b), matrix_info->ld_info + 1,
-                matrix_info->value_info + 1, reinterpret_cast<Tc **>(c),
-                matrix_info->ld_info + 2, 1, &(matrix_info->groupsize_info));
+                q, matrix_info.transpose_info, matrix_info.transpose_info + 1,
+                matrix_info.size_info, matrix_info.size_info + 1,
+                matrix_info.size_info + 2, matrix_info.value_info,
+                reinterpret_cast<const Ta **>(a), matrix_info.ld_info,
+                reinterpret_cast<const Tb **>(b), matrix_info.ld_info + 1,
+                matrix_info.value_info + 1, reinterpret_cast<Tc **>(c),
+                matrix_info.ld_info + 2, 1, &(matrix_info.groupsize_info));
 
-            q.submit([&](sycl::handler &cgh)
-                     {
-    cgh.depends_on(e);
-    cgh.host_task([=] { std::free(matrix_info); }); });
         }
 
         template <class Ta, class Tb, class Tc, class Ts>
