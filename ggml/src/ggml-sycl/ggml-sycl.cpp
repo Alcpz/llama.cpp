@@ -10,8 +10,6 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
-#define SYCL_USE_SYCL_GRAPH
-
 #include <algorithm>
 #include <assert.h>
 #include <atomic>
@@ -4151,7 +4149,7 @@ static ggml_status ggml_backend_sycl_graph_compute(ggml_backend_t backend, ggml_
     ggml_backend_sycl_context * sycl_ctx = (ggml_backend_sycl_context *)backend->context;
     ggml_sycl_set_main_device(sycl_ctx->device);
 
-#ifdef SYCL_USE_SYCL_GRAPH
+#ifdef GGML_USE_SYCL_GRAPH
     namespace sycl_ex = sycl::ext::oneapi::experimental;
     sycl_ex::command_graph model_sycl_graph(*(sycl_ctx->stream()));
 
@@ -4178,7 +4176,7 @@ static ggml_status ggml_backend_sycl_graph_compute(ggml_backend_t backend, ggml_
         GGML_ASSERT(ok);
     }
 
-#ifdef SYCL_USE_SYCL_GRAPH
+#ifdef GGML_USE_SYCL_GRAPH
     model_sycl_graph.end_recording();
     // std::cerr << "SYCL-GRAPHS len of nodes:" << model_sycl_graph.get_nodes().size() << " of " << cgraph->n_nodes << std::endl;
 
