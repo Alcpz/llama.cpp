@@ -4182,20 +4182,20 @@ static ggml_status ggml_backend_sycl_graph_compute(ggml_backend_t backend, ggml_
     model_sycl_graph.end_recording();
     // std::cerr << "SYCL-GRAPHS len of nodes:" << model_sycl_graph.get_nodes().size() << " of " << cgraph->n_nodes << std::endl;
 
-    // if (!sycl_ctx->exec_graph) {
+    if (!sycl_ctx->exec_graph) {
         auto exec_graph = model_sycl_graph.finalize({sycl_ex::property::graph::updatable{}});
         sycl_ctx->exec_graph = std::make_unique<
             sycl_ex::command_graph<sycl_ex::graph_state::executable>>(exec_graph);
-    // } else {
-    //     try {
-    //         sycl_ctx->exec_graph->update(model_sycl_graph);
-    //     } catch (sycl::exception e) {
-    //       GGML_SYCL_DEBUG("[SYCL-GRAPH] Exception when updating graph.\n");
-    //       auto exec_graph = model_sycl_graph.finalize({sycl_ex::property::graph::updatable{}});
-    //       sycl_ctx->exec_graph = std::make_unique<
-    //           sycl_ex::command_graph<sycl_ex::graph_state::executable>>(exec_graph);
-    //     }
-    // }
+    } else {
+        try {
+            sycl_ctx->exec_graph->update(model_sycl_graph);
+        } catch (sycl::exception e) {
+          GGML_SYCL_DEBUG("[SYCL-GRAPH] Exception when updating graph.\n");
+          auto exec_graph = model_sycl_graph.finalize({sycl_ex::property::graph::updatable{}});
+          sycl_ctx->exec_graph = std::make_unique<
+              sycl_ex::command_graph<sycl_ex::graph_state::executable>>(exec_graph);
+        }
+    }
 
     sycl_ctx->stream()->ext_oneapi_graph(*(sycl_ctx->exec_graph));
 #endif
