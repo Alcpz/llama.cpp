@@ -655,21 +655,25 @@ static void mul_mat_vec_q4_K_q8_1_sycl(const void *vx, const void *vy,
                                        const int nrows,
                                        dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK_K == 0);
-    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
-    const sycl::range<3> block_nums(1, 1, block_num_y);
-    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, QK_WARP_SIZE);
+    // const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    // const sycl::range<3> block_nums(1, 1, block_num_y);
+    // const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, QK_WARP_SIZE);
     {
-
         stream->submit([&](sycl::handler &cgh) {
+            // cgh.parallel_for(
+            //     sycl::nd_range<3>(block_nums * block_dims, block_dims),
+            //     [=](sycl::nd_item<3> item_ct1)
+            //         [[intel::reqd_sub_group_size(QK_WARP_SIZE)]] {
+            //             mul_mat_vec_q<QK_K, QI4_K, block_q4_K,
+            //                           VDR_Q4_K_Q8_1_MMVQ, vec_dot_q4_K_q8_1>(
+            //                 vx, vy, dst, ncols, nrows, item_ct1);
+            //         });
 
-            cgh.parallel_for(
-                sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                [=](sycl::nd_item<3> item_ct1)
-                    [[intel::reqd_sub_group_size(QK_WARP_SIZE)]] {
-                        mul_mat_vec_q<QK_K, QI4_K, block_q4_K,
-                                      VDR_Q4_K_Q8_1_MMVQ, vec_dot_q4_K_q8_1>(
-                            vx, vy, dst, ncols, nrows, item_ct1);
-                    });
+            cgh.ext_codeplay_enqueue_native_command(
+                [=](const sycl::interop_handle &ih) {
+                    mul_mat_vec_q4_K_q8_1_sycl_facade(vx, vy, dst, ncols,
+                                                      nrows);
+                });
         });
     }
 }
@@ -703,21 +707,27 @@ static void mul_mat_vec_q6_K_q8_1_sycl(const void *vx, const void *vy,
                                        const int nrows,
                                        dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK_K == 0);
-    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
-    const sycl::range<3> block_nums(1, 1, block_num_y);
-    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, QK_WARP_SIZE);
+    // const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    // const sycl::range<3> block_nums(1, 1, block_num_y);
+    // const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, QK_WARP_SIZE);
     {
 
         stream->submit([&](sycl::handler &cgh) {
 
-            cgh.parallel_for(
-                sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                [=](sycl::nd_item<3> item_ct1)
-                    [[intel::reqd_sub_group_size(QK_WARP_SIZE)]] {
-                        mul_mat_vec_q<QK_K, QI6_K, block_q6_K,
-                                      VDR_Q6_K_Q8_1_MMVQ, vec_dot_q6_K_q8_1>(
-                            vx, vy, dst, ncols, nrows, item_ct1);
-                    });
+            // cgh.parallel_for(
+            //     sycl::nd_range<3>(block_nums * block_dims, block_dims),
+            //     [=](sycl::nd_item<3> item_ct1)
+            //         [[intel::reqd_sub_group_size(QK_WARP_SIZE)]] {
+            //             mul_mat_vec_q<QK_K, QI6_K, block_q6_K,
+            //                           VDR_Q6_K_Q8_1_MMVQ, vec_dot_q6_K_q8_1>(
+            //                 vx, vy, dst, ncols, nrows, item_ct1);
+            //         });
+
+            cgh.ext_codeplay_enqueue_native_command(
+                [=](const sycl::interop_handle &ih) {
+                    mul_mat_vec_q4_K_q8_1_sycl_facade(vx, vy, dst, ncols,
+                                                      nrows);
+                });
         });
     }
 }
