@@ -39,6 +39,7 @@
 #include "ggml-sycl/backend.hpp"
 #include "ggml-sycl/presets.hpp"
 #include "ggml-sycl/gemm.hpp"
+#include "ggml.h"
 
 static bool g_sycl_loaded = false;
 
@@ -5145,6 +5146,8 @@ static bool ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, const g
                 if (op->op == GGML_OP_MUL_MAT) {
                     a = op->src[0];
                     b = op->src[1];
+                    if (ggml_is_permuted(a) || ggml_is_permuted(b))
+                        return false;
                 } else {
                     a = op->src[2];
                     b = op->src[1];

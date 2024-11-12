@@ -489,52 +489,51 @@ vec_dot_q8_0_q8_1(const void *__restrict__ vbq,
 #define GGML_CUDA_MMV_Y 1
 
 #define VDR_Q4_K_Q8_1_MMVQ 2
+
 void mul_mat_vec_q4_K_q8_1_sycl_facade(const void *vx, const void *vy,
                                        float *dst, const int ncols,
-                                       const int nrows) {
+                                       const int nrows, CUstream stream) {
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
     const dim3 block_nums(block_num_y, 1, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q_interop<QK_K, QI4_K, block_q4_K, VDR_Q4_K_Q8_1_MMVQ,
                           vec_dot_q4_K_q8_1>
-        <<<block_nums, block_dims /*, 0, stream */>>>(vx, vy, dst, ncols,
-                                                      nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
 }
 
 #define VDR_Q6_K_Q8_1_MMVQ 1
 void mul_mat_vec_q6_K_q8_1_sycl_facade(const void *vx, const void *vy,
                                        float *dst, const int ncols,
-                                       const int nrows) {
+                                       const int nrows, CUstream stream) {
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
     const dim3 block_nums(block_num_y, 1, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q_interop<QK_K, QI6_K, block_q6_K, VDR_Q6_K_Q8_1_MMVQ,
                           vec_dot_q6_K_q8_1>
-        <<<block_nums, block_dims/* , 0, stream */>>>(vx, vy, dst, ncols,
-                                                       nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
 }
 
 #define VDR_Q5_K_Q8_1_MMVQ 2
 void mul_mat_vec_q5_K_q8_1_sycl_facade(const void *vx, const void *vy,
                                        float *dst, const int ncols,
-                                       const int nrows) {
+                                       const int nrows, CUstream stream) {
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
     const dim3 block_nums(block_num_y, 1, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q_interop<QK_K, QI5_K, block_q5_K, VDR_Q5_K_Q8_1_MMVQ,
                           vec_dot_q5_K_q8_1>
-        <<<block_nums, block_dims /* , 0, stream */>>>(vx, vy, dst, ncols,
-                                                       nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
 }
 
 void mul_mat_vec_q8_0_q8_1_sycl_facade(const void *vx, const void *vy,
                                        float *dst, const int ncols,
-                                       const int nrows) {
-  const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, 1);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  mul_mat_vec_q_interop<QK8_0, QI8_0, block_q8_0, VDR_Q8_0_Q8_1_MMVQ, vec_dot_q8_0_q8_1>
-      <<<block_nums, block_dims/* , 0, stream */>>>(vx, vy, dst, ncols, nrows);
+                                       const int nrows, CUstream stream) {
+    const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
+    const dim3 block_nums(block_num_y, 1, 1);
+    const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+    mul_mat_vec_q_interop<QK8_0, QI8_0, block_q8_0, VDR_Q8_0_Q8_1_MMVQ,
+                          vec_dot_q8_0_q8_1>
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
 }
 
 static __global__ void quantize_q8_1(const float *__restrict__ x,
@@ -581,11 +580,11 @@ static __global__ void quantize_q8_1(const float *__restrict__ x,
 #define CUDA_QUANTIZE_BLOCK_SIZE 256
 #define CUDA_DEQUANTIZE_BLOCK_SIZE 256
 void quantize_row_q8_1_facade(const float *x, void *vy, const int kx,
-                              const int ky, const int kx_padded) {
+                              const int ky, const int kx_padded,
+                              CUstream stream) {
     const int block_num_x =
         (kx_padded + CUDA_QUANTIZE_BLOCK_SIZE - 1) / CUDA_QUANTIZE_BLOCK_SIZE;
     const dim3 num_blocks(block_num_x, ky, 1);
     const dim3 block_size(CUDA_DEQUANTIZE_BLOCK_SIZE, 1, 1);
-    quantize_q8_1<<<num_blocks, block_size /* , 0, stream */>>>(x, vy, kx,
-                                                                kx_padded);
+    quantize_q8_1<<<num_blocks, block_size, 0, stream>>>(x, vy, kx, kx_padded);
 }
