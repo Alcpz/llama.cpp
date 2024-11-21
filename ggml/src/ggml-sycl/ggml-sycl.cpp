@@ -4178,7 +4178,6 @@ static ggml_status ggml_backend_sycl_graph_compute(ggml_backend_t backend, ggml_
 
 #ifdef GGML_USE_SYCL_GRAPH
     model_sycl_graph.end_recording();
-    // std::cerr << "SYCL-GRAPHS len of nodes:" << model_sycl_graph.get_nodes().size() << " of " << cgraph->n_nodes << std::endl;
 
     if (!sycl_ctx->exec_graph) {
         auto exec_graph = model_sycl_graph.finalize({sycl_ex::property::graph::updatable{}});
