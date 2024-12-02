@@ -17,7 +17,6 @@
 #include <sycl/half_type.hpp>
 #include <syclcompat/math.hpp>
 #include <oneapi/mkl.hpp>
-#include <map>
 
 #include "ggml.h"
 
