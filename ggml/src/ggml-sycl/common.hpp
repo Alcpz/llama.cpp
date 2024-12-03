@@ -203,6 +203,14 @@ template <typename T> struct ggml_sycl_pool_alloc {
         }
     }
 
+    T * realloc(size_t size) {
+        GGML_ASSERT(pool != nullptr);
+        if (ptr)
+            pool->free(ptr, actual_size);
+        ptr = (T *) pool->alloc(size * sizeof(T), &this->actual_size);
+        return ptr;
+    }
+
     // size is in number of elements
     T * alloc(size_t size) {
         GGML_ASSERT(pool != nullptr);
@@ -293,44 +301,26 @@ struct ggml_backend_sycl_context {
 
     dnnl::stream stream_dnnl() { return stream_dnnl(device, 0); }
 
-    struct scratchpad_mgr {
-        scratchpad_mgr(sycl::queue* q) : _q{ q }, _size{ 0 }, _mem{ nullptr } {}
+    std::unordered_map<sycl::queue *, std::unique_ptr<ggml_sycl_pool_alloc<uint8_t>>> scratchpad_map;
 
-        dnnl::memory get_scratchpad_mem(const dnnl::memory::desc& scratchpad_md, const dnnl::engine& eng) {
-            size_t size = scratchpad_md.get_size();
-            if (size > _size) {
-                if (_mem) {
-                    sycl::free(_mem, *_q);
-                }
-                _size = size;
-                // TODO: Change allocation to ggml_sycl_pool::alloc
-                _mem = sycl::malloc_device(size, *_q);
-            }
-            return dnnl::memory(scratchpad_md, eng, _mem);
-        }
-
-        ~scratchpad_mgr() {
-            sycl::free(_mem, *_q);
-        }
-
-      private:
-        sycl::queue * _q;
-        size_t        _size;
-        void *        _mem;
-    };
-
-    std::unordered_map<sycl::queue *, std::unique_ptr<scratchpad_mgr>> scratchpad_map;
-
-    scratchpad_mgr * get_scratchpad_mgr(sycl::queue * q) {
+    dnnl::memory get_scratchpad_mem(const dnnl::memory::desc & scratchpad_md,
+                                    const dnnl::engine & eng, const queue_ptr q) {
+        ggml_sycl_pool_alloc<uint8_t> * pool;
         auto it = scratchpad_map.find(q);
         if (it == scratchpad_map.end()) {
-            scratchpad_map[q] = std::make_unique<scratchpad_mgr>(q);
-            return scratchpad_map[q].get();
+            scratchpad_map[q] = std::make_unique<ggml_sycl_pool_alloc<uint8_t>>(this->pool());
+            pool = scratchpad_map[q].get();
         } else {
-            return it->second.get();
+            pool = it->second.get();
         }
-    };
 
+        size_t scratchpad_size = scratchpad_md.get_size();
+        if (scratchpad_size > pool->actual_size) {
+            pool->realloc(scratchpad_size);
+        }
+        void * mem_ptr = pool->get();
+        return dnnl::memory(scratchpad_md, eng, mem_ptr);
+    }
 #endif
 
     // pool

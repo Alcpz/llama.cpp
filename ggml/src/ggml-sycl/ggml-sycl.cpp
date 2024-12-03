@@ -2538,10 +2538,9 @@ inline void ggml_sycl_op_mul_mat_sycl(
         const to_fp32_sycl_t to_fp32_sycl = ggml_get_to_fp32_sycl(GGML_TYPE_F16);
         to_fp32_sycl(dst_f16.get(), dst_dd_i, row_diff*src1_ncols, stream);
 #else
-        auto dnnl_stream = ctx.stream_dnnl(stream);
-        ggml_backend_sycl_context::scratchpad_mgr* scrpad_mgr = ctx.get_scratchpad_mgr(stream);
-        DnnlGemmWrapper::row_gemm(dnnl_stream, scrpad_mgr, false, true, src1_ncols, row_diff, ne10, src1_ptr, DnnlGemmWrapper::to_dt<sycl::half>(),
-            src0_ptr, DnnlGemmWrapper::to_dt<sycl::half>(), dst_f16.get(), DnnlGemmWrapper::to_dt<sycl::half>());
+        DnnlGemmWrapper::row_gemm(ctx, false, true, src1_ncols, row_diff, ne10, src1_ptr,
+                                  DnnlGemmWrapper::to_dt<sycl::half>(), src0_ptr, DnnlGemmWrapper::to_dt<sycl::half>(),
+                                  dst_f16.get(), DnnlGemmWrapper::to_dt<sycl::half>(), stream);
         const to_fp32_sycl_t to_fp32_sycl = ggml_get_to_fp32_sycl(GGML_TYPE_F16);
         to_fp32_sycl(dst_f16.get(), dst_dd_i, row_diff* src1_ncols, stream);
 #endif
@@ -2580,19 +2579,9 @@ inline void ggml_sycl_op_mul_mat_sycl(
             dst_dd_i, ldc)));
 #    endif
 #else
-        auto dnnl_stream = ctx.stream_dnnl(stream);
-         // DnnlGemmWrapper::row_gemm(dnnl_stream, false, true, src1_ncols, row_diff, ne10, src1_ddf1_i, DnnlGemmWrapper::to_dt<float>(),
-         //    src0_ddf_i, DnnlGemmWrapper::to_dt<float>(), dst_dd_i, DnnlGemmWrapper::to_dt<float>());
-
-        ggml_backend_sycl_context::scratchpad_mgr * scrpad_mgr = ctx.get_scratchpad_mgr(stream);
-        DnnlGemmWrapper::row_gemm(dnnl_stream, scrpad_mgr, false, true, src1_ncols, row_diff, ne10, src1_ddf1_i, DnnlGemmWrapper::to_dt<float>(),
-            src0_ddf_i, DnnlGemmWrapper::to_dt<float>(), dst_dd_i, DnnlGemmWrapper::to_dt<float>());
-
-        // void * scratchpad = ctx.get_scratchpad_mem(stream);
-        // void * scratchpad = sycl::malloc_device(100000, *stream);
-        // DnnlGemmWrapper::row_gemm(dnnl_stream, scratchpad, false, true, src1_ncols, row_diff, ne10, src1_ddf1_i, DnnlGemmWrapper::to_dt<float>(),
-        //     src0_ddf_i, DnnlGemmWrapper::to_dt<float>(), dst_dd_i, DnnlGemmWrapper::to_dt<float>());
-        // sycl::free(scratchpad, *stream);
+        DnnlGemmWrapper::row_gemm(ctx, false, true, src1_ncols, row_diff, ne10, src1_ddf1_i,
+                                  DnnlGemmWrapper::to_dt<float>(), src0_ddf_i, DnnlGemmWrapper::to_dt<float>(),
+                                  dst_dd_i, DnnlGemmWrapper::to_dt<float>(), stream);
 #endif
     }
     (void) dst;
