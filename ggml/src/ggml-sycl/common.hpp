@@ -19,7 +19,6 @@
 #include "ggml-sycl.h"
 #include "presets.hpp"
 #if GGML_SYCL_DNNL
-#    pragma warning ENABLED DNNL
 #    include "dnnl.hpp"
 #    include "dnnl_sycl.hpp"
 #endif
