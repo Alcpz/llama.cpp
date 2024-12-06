@@ -48,14 +48,9 @@ target_sources(ggml-sycl PRIVATE ${GGML_HEADERS_SYCL} ${GGML_SOURCES_SYCL})
 
 find_package(DNNL)
 message("-- DNNL found:" ${DNNL_FOUND})
+add_compile_definitions(GGML_SYCL_DNNL=${DNNL_FOUND})
 
-if (GGML_SYCL_TARGET STREQUAL "INTEL")
-    add_compile_definitions(GGML_SYCL_DNNL=${DNNL_FOUND})
-else()
-    add_compile_definitions(GGML_SYCL_DNNL=0)
-endif()
-
-if (${DNNL_FOUND} AND GGML_SYCL_TARGET STREQUAL "INTEL")
+if (${DNNL_FOUND})
     target_link_libraries(ggml-sycl PRIVATE DNNL::dnnl)
 endif()
 
