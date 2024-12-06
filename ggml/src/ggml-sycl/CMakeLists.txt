@@ -46,11 +46,6 @@ file(GLOB   GGML_HEADERS_SYCL "*.hpp")
 file(GLOB   GGML_SOURCES_SYCL "*.cpp")
 target_sources(ggml-sycl PRIVATE ${GGML_HEADERS_SYCL} ${GGML_SOURCES_SYCL})
 
-find_package(DNNL)
-message("-- DNNL found:" ${DNNL_FOUND})
-
-add_compile_definitions(GGML_SYCL_DNNL=${DNNL_FOUND})
-target_link_libraries(ggml-sycl PRIVATE DNNL::dnnl)
 
 if (WIN32)
     find_package(IntelSYCL REQUIRED)
@@ -62,7 +57,7 @@ else()
     elseif (GGML_SYCL_TARGET STREQUAL "NVIDIA")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsycl-targets=nvptx64-nvidia-cuda")
         add_compile_definitions(GGML_SYCL_NVIDIA)
-        target_link_libraries(ggml-sycl PRIVATE sycl pthread m dl onemkl_blas_cublas)
+        target_link_libraries(ggml-sycl PRIVATE sycl pthread m dl onemkl_blas_cublas dnnl)
     elseif (GGML_SYCL_TARGET STREQUAL "AMD")
         if (NOT GGML_SYCL_DEVICE_ARCH)
             message(ERROR "Can't enable SYCL hip backend, GGML_SYCL_DEVICE_ARCH has not been set.")
@@ -75,3 +70,13 @@ else()
       set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Xsycl-target-backend --offload-arch=${GGML_SYCL_DEVICE_ARCH}")
   endif()
 endif()
+
+enable_language(CUDA)
+find_package(CUDAToolkit REQUIRED)
+
+find_package(DNNL)
+message("-- DNNL found:" ${DNNL_FOUND})
+add_compile_definitions(GGML_SYCL_DNNL=${DNNL_FOUND})
+#target_link_libraries(ggml-sycl PRIVATE DNNL::dnnl)
+
+

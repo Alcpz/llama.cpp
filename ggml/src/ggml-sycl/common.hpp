@@ -275,13 +275,15 @@ struct ggml_backend_sycl_context {
         return stream_dnnl(q);
     }
 
-    dnnl::engine engine_dnnl(sycl::queue * qptr) {
+    dnnl::engine engine_dnnl(sycl::queue* qptr) {
         auto it = engine_map.find(qptr);
         if (it == engine_map.end()) {
-            auto eng         = make_engine(qptr);
+            auto eng = make_engine(qptr);
             engine_map[qptr] = eng;
             return eng;
-        } else {
+        }
+        else
+        {
             return it->second;
         }
     }

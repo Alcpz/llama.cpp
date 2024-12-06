@@ -36,8 +36,8 @@ class DnnlGemmWrapper {
     static inline void row_gemm(ggml_backend_sycl_context & ctx, bool a_trans, bool b_trans, int m, int n, int k,
                                 const void * a, dt at, const void * b, dt bt, void * c, dt ct,
                                 const queue_ptr & q) {
-        const auto         stream  = ctx.stream_dnnl(q);
-        const auto         eng     = ctx.engine_dnnl(q);
+        auto         stream  = ctx.stream_dnnl(q);
+        auto         eng     = ctx.engine_dnnl(q);
         dnnl::memory::dims a_dims  = { m, k };
         dnnl::memory::dims b_dims  = { k, n };
         dnnl::memory::dims c_dims  = { m, n };
