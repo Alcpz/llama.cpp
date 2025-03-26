@@ -25,6 +25,7 @@
 #include "gla.hpp"
 #include "im2col.hpp"
 #include "mmq.hpp"
+#include "mmvcute.hpp"
 #include "mmvq.hpp"
 #include "norm.hpp"
 #include "outprod.hpp"

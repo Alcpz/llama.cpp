@@ -2976,7 +2976,22 @@ enum class mul_mat_algo {
     DMMV         = 0,
     MMVQ         = 1,
     MUL_MAT_SYCL = 2,
+    CUTE         = 3,
 };
+
+#define GGML_SYCL_CUTLASS_ENABLE 1
+#ifdef GGML_SYCL_CUTLASS_ENABLE
+inline bool ggml_sycl_supports_mmvcute(enum ggml_type type) {
+    switch (type) {
+        // case GGML_TYPE_Q4_K:
+        case GGML_TYPE_Q6_K:
+            return true;
+        default:
+            return false;
+    }
+}
+#endif
+#undef GGML_SYCL_CUTLASS_ENABLE
 
 inline bool ggml_sycl_supports_mmq(enum ggml_type type) {
     // TODO: accuracy issues in MMQ
@@ -2990,6 +3005,15 @@ inline bool ggml_sycl_supports_reorder_mul_mat_sycl(enum ggml_type type) {
             return true;
         case GGML_TYPE_Q4_K:
             return !g_ggml_sycl_prioritize_dmmv;
+        default:
+            return false;
+    }
+}
+
+inline bool ggml_sycl_supports_reorder_cute(enum ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_Q4_0:
+            return true;
         default:
             return false;
     }
@@ -3130,6 +3154,11 @@ static void opt_for_reorder(ggml_backend_sycl_context * ctx, const ggml_tensor *
     }
 
     switch (mm_algorithm) {
+        case mul_mat_algo::CUTE:
+            if (!ggml_sycl_supports_reorder_cute(src0->type)) {
+                GGML_ABORT("CUTE only supported on reordered kernels");
+            }
+            break;
         case mul_mat_algo::DMMV:
             if (!ggml_sycl_supports_reorder_dmmv(src0->type)) {
                 return;
@@ -3199,6 +3228,14 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
 #ifdef SYCL_USE_XMX
     use_mul_mat_q = use_mul_mat_q && (src1->ne[1] <= MMQ_MAX_BATCH_SIZE);
 #endif // SYCL_USE_XMX
+// TODO: Properly add the ifdef at Cmake
+#define GGML_SYCL_CUTLASS_ENABLE 1
+#ifdef GGML_SYCL_CUTLASS_ENABLE
+    bool use_mul_mat_vec_cute = ggml_sycl_supports_mmvcute(src0->type)
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
+    use_dequantize_mul_mat_vec = use_dequantize_mul_mat_vec && !use_mul_mat_vec_cute;
+#endif
+#undef GGML_SYCL_CUTLASS_ENABLE
 
 
     // mmvq path is faster in the CUDA backend.
@@ -3226,6 +3263,10 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
     } else if (!split && src0->type == GGML_TYPE_F16 && !ggml_is_transposed(src0) && !ggml_is_transposed(src1) && src1->ne[2]*src1->ne[3] > 1) {
         // KQ + KQV multi-batch
         ggml_sycl_mul_mat_batched_sycl(ctx, src0, src1, dst);
+    } else if (use_mul_mat_vec_cute) {
+        constexpr bool convert_src1_to_q8_1 = true;
+        opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::CUTE);
+        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_cute, convert_src1_to_q8_1);
     } else if (use_dequantize_mul_mat_vec) {
         constexpr bool convert_src1_to_q8_1 = false;
         opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::DMMV);
