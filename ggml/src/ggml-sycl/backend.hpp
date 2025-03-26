@@ -21,6 +21,7 @@
 #include "dmmv.hpp"
 #include "mmq.hpp"
 #include "mmvq.hpp"
+#include "mmvcute.hpp"
 #include "rope.hpp"
 #include "norm.hpp"
 #include "softmax.hpp"

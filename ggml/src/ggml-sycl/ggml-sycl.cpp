@@ -2917,6 +2917,20 @@ catch (sycl::exception const &exc) {
   std::exit(1);
 }
 
+#define GGML_SYCL_CUTLASS_ENABLE 1
+#ifdef GGML_SYCL_CUTLASS_ENABLE
+inline bool ggml_sycl_supports_mmvcute(enum ggml_type type) {
+    switch (type) {
+        // case GGML_TYPE_Q4_K:
+        case GGML_TYPE_Q6_K:
+            return true;
+        default:
+            return false;
+    }
+}
+#endif
+#undef GGML_SYCL_CUTLASS_ENABLE
+
 inline bool ggml_sycl_supports_mmq(enum ggml_type type) {
     // TODO: accuracy issues in MMQ
     GGML_UNUSED(type);
@@ -2982,6 +2996,14 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
 #ifdef SYCL_USE_XMX
     use_mul_mat_q = use_mul_mat_q && (src1->ne[1] <= MMQ_MAX_BATCH_SIZE);
 #endif // SYCL_USE_XMX
+// TODO: Properly add the ifdef at Cmake
+#define GGML_SYCL_CUTLASS_ENABLE 1
+#ifdef GGML_SYCL_CUTLASS_ENABLE
+    bool use_mul_mat_vec_cute = ggml_sycl_supports_mmvcute(src0->type)
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
+    use_dequantize_mul_mat_vec = use_dequantize_mul_mat_vec && !use_mul_mat_vec_cute;
+#endif
+#undef GGML_SYCL_CUTLASS_ENABLE
 
     // mmvq path is faster in the CUDA backend.
     if (ctx.stream()->get_backend() == sycl::backend::ext_oneapi_cuda)
@@ -3003,15 +3025,21 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
     } else if (!split && src0->type == GGML_TYPE_F16 && !ggml_is_transposed(src0) && !ggml_is_transposed(src1) && src1->ne[2]*src1->ne[3] > 1) {
         // KQ + KQV multi-batch
         ggml_sycl_mul_mat_batched_sycl(ctx, src0, src1, dst);
+    } else if (use_mul_mat_vec_cute) {
+        constexpr bool convert_src1_to_q8_1 = true;
+        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_cute, convert_src1_to_q8_1);
     } else if (use_dequantize_mul_mat_vec) {
-        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_dequantize_mul_mat_vec, false);
-        // save_tensor_txt("1/dst_1.txt", (float*) dst->data, src0->ne[1], sizeof(float), ctx.stream());
+        constexpr bool convert_src1_to_q8_1 = false;
+        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_dequantize_mul_mat_vec, convert_src1_to_q8_1);
     } else if (use_mul_mat_vec_q) {
-        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_q, true);
+        constexpr bool convert_src1_to_q8_1 = true;
+        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_q, convert_src1_to_q8_1);
     } else if (use_mul_mat_q) {
-        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_q, true);
+        constexpr bool convert_src1_to_q8_1 = true;
+        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_q, convert_src1_to_q8_1);
     } else {
-        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_sycl, false);
+        constexpr bool convert_src1_to_q8_1 = false;
+        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_sycl, convert_src1_to_q8_1);
     }
 }
 
