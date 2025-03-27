@@ -114,6 +114,11 @@ if (GGML_SYCL_TARGET STREQUAL "INTEL")
     if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         set(SYCL_COMPILER ON)
     endif()
+
+    target_compile_options(ggml-sycl PRIVATE "-DCUTLASS_ENABLE_SYCL" "-DSYCL_INTEL_TARGET" "-fsycl-targets=intel_gpu_pvc" "-Xspirv-translator" "-spirv-ext=+SPV_INTEL_split_barrier")
+    target_link_options(ggml-sycl PRIVATE "-DCUTLASS_ENABLE_SYCL" "-DSYCL_INTEL_TARGET" "-fsycl-targets=intel_gpu_pvc" "-Xspirv-translator" "-spirv-ext=+SPV_INTEL_split_barrier")
+    target_include_directories(ggml-sycl PRIVATE "/home/acabrera/sources/cutlass-fork/include")
+
     find_package(MKL REQUIRED)
     target_link_libraries(ggml-sycl PRIVATE MKL::MKL_SYCL::BLAS)
     target_compile_definitions(ggml-sycl PRIVATE GGML_SYCL_USE_INTEL_ONEMKL)
