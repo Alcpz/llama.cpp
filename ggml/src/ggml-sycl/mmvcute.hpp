@@ -13,7 +13,8 @@
 typedef float (*vec_dot_cute_sycl_t)(const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1,
                                      const int & iqs);
 
-constexpr size_t VDR_Q6_K_Q8_1_MMVCUTE = 2;
+constexpr size_t VDR_Q6_K_Q8_1_MMVCUTE = 1;
+constexpr size_t VDR_Q4_K_Q8_1_MMVCUTE = 2;
 
 void ggml_sycl_op_mul_mat_vec_cute(ggml_backend_sycl_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1,
                                    ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,

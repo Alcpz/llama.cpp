@@ -1315,6 +1315,7 @@ typedef void (*ggml_sycl_op_mul_mat_t)(
 
 
 
+
 template<int QUANT_BLOCK_TILE>
 static void quantize_q8_1(const float * __restrict__ x, void * __restrict__ vy, const int kx, const int kx_padded,
                           const sycl::nd_item<3> &item_ct1) {
@@ -1676,7 +1677,7 @@ static void quantize_row_q8_1_sycl(const float *x, void *vy, const int kx,
                                    queue_ptr stream) {
     const int block_num_x = (kx_padded + SYCL_QUANTIZE_BLOCK_SIZE - 1) / SYCL_QUANTIZE_BLOCK_SIZE;
     const sycl::range<3> num_blocks(1, ky, block_num_x);
-    int constexpr QUANT_BLOCK_TILE = QK8_1 / WARP_SIZE;
+    constexpr int QUANT_BLOCK_TILE = QK8_1 / WARP_SIZE;
     static_assert(QK8_1 % WARP_SIZE == 0);
     const sycl::range<3> block_size(1, 1, SYCL_QUANTIZE_BLOCK_SIZE / QUANT_BLOCK_TILE);
     {
@@ -2921,8 +2922,8 @@ catch (sycl::exception const &exc) {
 #ifdef GGML_SYCL_CUTLASS_ENABLE
 inline bool ggml_sycl_supports_mmvcute(enum ggml_type type) {
     switch (type) {
-        // case GGML_TYPE_Q4_K:
-        case GGML_TYPE_Q6_K:
+        case GGML_TYPE_Q4_K:
+        // case GGML_TYPE_Q6_K:
             return true;
         default:
             return false;
@@ -3001,13 +3002,27 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
 #ifdef GGML_SYCL_CUTLASS_ENABLE
     bool use_mul_mat_vec_cute = ggml_sycl_supports_mmvcute(src0->type)
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
-    use_dequantize_mul_mat_vec = use_dequantize_mul_mat_vec && !use_mul_mat_vec_cute;
 #endif
-#undef GGML_SYCL_CUTLASS_ENABLE
 
     // mmvq path is faster in the CUDA backend.
-    if (ctx.stream()->get_backend() == sycl::backend::ext_oneapi_cuda)
+    // if (ctx.stream()->get_backend() == sycl::backend::ext_oneapi_cuda)
         use_dequantize_mul_mat_vec = use_dequantize_mul_mat_vec && !use_mul_mat_vec_q;
+
+        std::cout << std::endl << "DISPATCH" << std::endl;
+        std::cout << "use_dequantize_mul_mat_vec " << use_dequantize_mul_mat_vec << std::endl;
+        std::cout << "use_mul_mat_vec_q " << use_mul_mat_vec_q << std::endl;
+#ifdef GGML_SYCL_CUTLASS_ENABLE
+        std::cout << "use_mul_mat_vec_cute " << use_mul_mat_vec_cute << std::endl;
+#endif
+
+    if (use_mul_mat_vec_q || use_mul_mat_vec_cute) {
+        printf("src0: %8zu %8zu %8zu %8zu\n", src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3]);
+        printf("      %8zu %8zu %8zu %8zu\n", src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3]);
+        printf("src1: %8zu %8zu %8zu %8zu\n", src1->ne[0], src1->ne[1], src1->ne[2], src1->ne[3]);
+        printf("      %8zu %8zu %8zu %8zu\n", src1->nb[0], src1->nb[1], src1->nb[2], src1->nb[3]);
+        printf("src0 is contiguous %d, transposed %d, type = %s, name = %s\n", ggml_is_contiguous(src0), ggml_is_transposed(src0), ggml_type_name(src0->type), src0->name);
+        printf("src1 is contiguous %d, transposed %d, type = %s, name = %s\n", ggml_is_contiguous(src1), ggml_is_transposed(src1), ggml_type_name(src1->type), src1->name);
+    }
 
     if (!split && src0->type == GGML_TYPE_F16 && ggml_is_permuted(src0) && ggml_is_permuted(src1) && src1->ne[1] == 1) {
         // TODO: Refactor and cleanup of mul mat dispatching.
@@ -3025,13 +3040,18 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
     } else if (!split && src0->type == GGML_TYPE_F16 && !ggml_is_transposed(src0) && !ggml_is_transposed(src1) && src1->ne[2]*src1->ne[3] > 1) {
         // KQ + KQV multi-batch
         ggml_sycl_mul_mat_batched_sycl(ctx, src0, src1, dst);
+#ifdef GGML_SYCL_CUTLASS_ENABLE
     } else if (use_mul_mat_vec_cute) {
+        std::cout << std::endl << "use_mul_mat_vec_cute" << std::endl;
         constexpr bool convert_src1_to_q8_1 = true;
         ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_cute, convert_src1_to_q8_1);
+#endif
+#undef GGML_SYCL_CUTLASS_ENABLE
     } else if (use_dequantize_mul_mat_vec) {
         constexpr bool convert_src1_to_q8_1 = false;
         ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_dequantize_mul_mat_vec, convert_src1_to_q8_1);
     } else if (use_mul_mat_vec_q) {
+        std::cout << std::endl << "use_mul_mat_vec_q" << std::endl;
         constexpr bool convert_src1_to_q8_1 = true;
         ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_q, convert_src1_to_q8_1);
     } else if (use_mul_mat_q) {
