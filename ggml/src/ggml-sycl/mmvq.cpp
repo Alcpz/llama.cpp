@@ -428,7 +428,7 @@ static void mul_mat_vec_q4_0_q8_1_sycl(const void * vx, const void * vy, float *
     const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
     const sycl::range<3> block_nums(1, 1, block_num_y);
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
-    printf("nrows=%d, ncols=%d\n", nrows, ncols);
+    printf("mmvq nrows=%d, ncols=%d\n", nrows, ncols);
     printf("global_size=%zu,%zu,%zu, local_size=%zu,%zu,%zu\n", block_nums[0], block_nums[1], block_dims[2] * block_nums[2],
                                                                 block_dims[0], block_dims[1], block_dims[2]);
     {
