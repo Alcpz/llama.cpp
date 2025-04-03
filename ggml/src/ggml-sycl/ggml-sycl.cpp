@@ -2919,10 +2919,11 @@ catch (sycl::exception const &exc) {
 }
 
 #define GGML_SYCL_CUTLASS_ENABLE 1
-#ifdef GGML_SYCL_CUTLASS_ENABLE
+#if GGML_SYCL_CUTLASS_ENABLE
 inline bool ggml_sycl_supports_mmvcute(enum ggml_type type) {
     switch (type) {
-        case GGML_TYPE_Q4_K:
+        case GGML_TYPE_Q4_0:
+        // case GGML_TYPE_Q4_K:
         // case GGML_TYPE_Q6_K:
             return true;
         default:
@@ -2930,7 +2931,6 @@ inline bool ggml_sycl_supports_mmvcute(enum ggml_type type) {
     }
 }
 #endif
-#undef GGML_SYCL_CUTLASS_ENABLE
 
 inline bool ggml_sycl_supports_mmq(enum ggml_type type) {
     // TODO: accuracy issues in MMQ
@@ -2997,9 +2997,7 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
 #ifdef SYCL_USE_XMX
     use_mul_mat_q = use_mul_mat_q && (src1->ne[1] <= MMQ_MAX_BATCH_SIZE);
 #endif // SYCL_USE_XMX
-// TODO: Properly add the ifdef at Cmake
-#define GGML_SYCL_CUTLASS_ENABLE 1
-#ifdef GGML_SYCL_CUTLASS_ENABLE
+#if GGML_SYCL_CUTLASS_ENABLE
     bool use_mul_mat_vec_cute = ggml_sycl_supports_mmvcute(src0->type)
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
 #endif
@@ -3011,7 +3009,7 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
         std::cout << std::endl << "DISPATCH" << std::endl;
         std::cout << "use_dequantize_mul_mat_vec " << use_dequantize_mul_mat_vec << std::endl;
         std::cout << "use_mul_mat_vec_q " << use_mul_mat_vec_q << std::endl;
-#ifdef GGML_SYCL_CUTLASS_ENABLE
+#if GGML_SYCL_CUTLASS_ENABLE
         std::cout << "use_mul_mat_vec_cute " << use_mul_mat_vec_cute << std::endl;
 #endif
 
@@ -3040,13 +3038,12 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
     } else if (!split && src0->type == GGML_TYPE_F16 && !ggml_is_transposed(src0) && !ggml_is_transposed(src1) && src1->ne[2]*src1->ne[3] > 1) {
         // KQ + KQV multi-batch
         ggml_sycl_mul_mat_batched_sycl(ctx, src0, src1, dst);
-#ifdef GGML_SYCL_CUTLASS_ENABLE
+#if GGML_SYCL_CUTLASS_ENABLE
     } else if (use_mul_mat_vec_cute) {
         std::cout << std::endl << "use_mul_mat_vec_cute" << std::endl;
         constexpr bool convert_src1_to_q8_1 = true;
         ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_cute, convert_src1_to_q8_1);
 #endif
-#undef GGML_SYCL_CUTLASS_ENABLE
     } else if (use_dequantize_mul_mat_vec) {
         constexpr bool convert_src1_to_q8_1 = false;
         ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_dequantize_mul_mat_vec, convert_src1_to_q8_1);

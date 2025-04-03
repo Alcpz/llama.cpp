@@ -603,8 +603,6 @@ vec_dot_q3_K_q8_1(const void *__restrict__ vbq,
 static __dpct_inline__ float
 vec_dot_q4_K_q8_1(const void *__restrict__ vbq,
                   const block_q8_1 *__restrict__ bq8_1, const int &iqs) {
-
-#ifndef GGML_QKK_64
     const block_q4_K * bq4_K = (const block_q4_K *) vbq;
 
     int    v[2];
@@ -646,52 +644,6 @@ vec_dot_q4_K_q8_1(const void *__restrict__ vbq,
     }
 
     return vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, bq4_K->dm, d8);
-
-#else
-
-#if __SYCL_ARCH__ >= VER_4VEC // lowest compute capability for integer intrinsics
-    const block_q4_K * bq4_K = (const block_q4_K *) vbq;
-
-    float sumf_d = 0.0f;
-    float sumf_m = 0.0f;
-
-    uint16_t aux16[2];
-    const uint8_t * s = (const uint8_t *)aux16;
-
-    const uint16_t * a = (const uint16_t *)bq4_K->scales;
-    aux16[0] = a[0] & 0x0f0f;
-    aux16[1] = (a[0] >> 4) & 0x0f0f;
-
-    const float dall = bq4_K->dm[0];
-    const float dmin = bq4_K->dm[1];
-
-    const float d8_1 = bq8_1[0].ds[0];
-    const float d8_2 = bq8_1[1].ds[1];
-
-    const int ui1 = *((const int *)bq8_1[0].qs + (iqs/2));
-    const int ui2 = *((const int *)bq8_1[0].qs + (iqs/2) + 4);
-    const int ui3 = *((const int *)bq8_1[1].qs + (iqs/2));
-    const int ui4 = *((const int *)bq8_1[1].qs + (iqs/2) + 4);
-
-    const int * q4 = (const int *)bq4_K->qs + (iqs/2);
-    const int v1 = q4[0];
-    const int v2 = q4[4];
-
-    const int dot1 = dpct::dp4a(ui2, v2 & 0x0f0f0f0f, dpct::dp4a(ui1, v1 & 0x0f0f0f0f, 0));
-    const int dot2 = dpct::dp4a(ui4, (v2 >> 4) & 0x0f0f0f0f, dpct::dp4a(ui3, (v1 >> 4) & 0x0f0f0f0f, 0));
-    const int dot3 = dpct::dp4a(0x01010101, ui2, dpct::dp4a(0x01010101, ui1, 0));
-    const int dot4 = dpct::dp4a(0x01010101, ui4, dpct::dp4a(0x01010101, ui3, 0));
-
-    sumf_d += d8_1 * (dot1 * s[0]) + d8_2 * (dot2 * s[1]);
-    sumf_m += d8_1 * (dot3 * s[2]) + d8_2 * (dot4 * s[3]);
-
-    return dall * sumf_d - dmin * sumf_m;
-
-#else
-    bad_arch();
-#endif // __SYCL_ARCH__ >= VER_4VEC
-
-#endif
 }
 
 static __dpct_inline__ float
