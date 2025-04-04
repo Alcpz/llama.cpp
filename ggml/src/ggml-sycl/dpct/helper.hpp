@@ -1840,10 +1840,37 @@ namespace dpct
                                            : id);
     }
 
+namespace detail {
+
+    SYCL_EXTERNAL extern "C" int __builtin_IB_dp4a_ss(int c, int a, int b)
+        __attribute__((const));
+    SYCL_EXTERNAL extern "C" int __builtin_IB_dp4a_us(int c, int a, int b)
+        __attribute__((const));
+    SYCL_EXTERNAL extern "C" int __builtin_IB_dp4a_su(int c, int a, int b)
+        __attribute__((const));
+    SYCL_EXTERNAL extern "C" int __builtin_IB_dp4a_uu(int c, int a, int b)
+        __attribute__((const));
+
+} // namespace detail
+
     template <typename T1, typename T2, typename T3>
     inline auto dp4a(T1 a, T2 b, T3 c)
     {
+#if defined(__SYCL_DEVICE_ONLY__)
+        syclcompat::dot_product_acc_t<T1, T2> res;
+        if constexpr (std::is_signed_v<T1> && std::is_signed_v<T2>) {
+          res = detail::__builtin_IB_dp4a_ss(c, a, b);
+        } else if constexpr (std::is_signed_v<T1> && std::is_unsigned_v<T2>) {
+          res = detail::__builtin_IB_dp4a_su(c, a, b);
+        } else if constexpr (std::is_unsigned_v<T1> && std::is_signed_v<T2>) {
+          res = detail::__builtin_IB_dp4a_us(c, a, b);
+        } else {
+          res = detail::__builtin_IB_dp4a_uu(c, a, b);
+        }
+        return res;
+#else
         return syclcompat::dp4a(a, b, c);
+#endif
     }
 
     struct sub_sat
