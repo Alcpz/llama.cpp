@@ -10,9 +10,8 @@
 
 #include "common.hpp"
 
-typedef float (*vec_dot_cute_sycl_t)(const void * __restrict__ vbq, const int           d_offset,
-                                     const block_q8_1 * __restrict__ bq8_1, const int * iby, const int & iqs2,
-                                     const int tid, const int i, const size_t row);
+typedef float (*vec_dot_cute_sycl_t)(const void * __restrict__ vbq, const ggml_half *   d4s,
+                                     const block_q8_1 * __restrict__ bq8_1, const uint32_t iqs, const uint32_t base_iq_index, const uint32_t ncols, const uint32_t nrows, const uint32_t row);
 
 #ifdef __SYCL_DEVICE_ONLY__
 template <class T, int N> using vector_t = T __attribute__((ext_vector_type(N)));
@@ -39,10 +38,10 @@ template <ggml_type type> struct block_q_t;
 // ncols * nrows * QK4_0 / QR4_0  bytes
 template <> struct block_q_t<GGML_TYPE_Q4_0> {
     struct traits {
-        static constexpr size_t qk       = QK4_0;
-        static constexpr size_t qi       = QI4_0;
-        static constexpr size_t qr       = QR4_0;
-        static constexpr size_t vdr_mmvq = 2;
+        static constexpr uint32_t qk       = QK4_0;
+        static constexpr uint32_t qi       = QI4_0;
+        static constexpr uint32_t qr       = QR4_0;
+        static constexpr uint32_t vdr_mmvq = 2;
     };
 
     // qs and d are contiguous in memory, out-of-bounds qs will access to d values
