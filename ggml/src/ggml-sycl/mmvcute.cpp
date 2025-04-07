@@ -99,41 +99,6 @@ static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restric
                 // block quant index of the row when casting the quants to int
                 const int iqs = elem + (sg_local_id % block_traits::qi);
 
-                // clang-format off
-
-                // if (sg_global_id == 0
-                //         && nd_item.get_local_id(2) % 4 == 0
-                //         && i == sg.get_local_linear_id() / block_elements_per_subgroup
-                //         ) {
-                //     // INFO: to have better ganularity on what to print
-                //     for (size_t j = 0; j < nd_item.get_global_range(2); j++) {
-                //         if (cute::thread(j)) {
-                //             if (cute::thread0()) {
-                //                 cute::print("\n ==============================================");
-                //                 cute::print("\nmul_mat_vec_ocl: blocks_per_sg=%zu", blocks_per_subgroup);
-                //             }
-                //             cute::print("\nmul_mat_vec_ocl: ");
-                //             cute::print("tid=%d ", nd_item.get_global_linear_id());
-                //             cute::print("item<2>=%d ", nd_item.get_local_id(2));
-                //             cute::print("local_id<2>=%d ", sg_local_id);
-                //             cute::print("row=%d, ", row);
-                //             // cute::print("bpr=%d ", blocks_per_row);
-                //             // cute::print("bps=%d ", blocks_per_subgroup);
-                //             // cute::print("eps=%d ", block_elements_per_subgroup);
-                //             cute::print("i=%d ", i);
-                //             cute::print("elem=%d ", elem);
-                //             cute::print("ibx=%zu ", ibx);
-                //             cute::print("ibx_offset=%zu ", ibx_offset);
-                //             // cute::print("iby=%d ", iby);
-                //             // cute::print("iby[0]=%d ", iby[0]);
-                //             // cute::print("iby[1]=%d ", iby[1]);
-                //             // cute::print("iby[2]=%d ", iby[2]);
-                //             cute::print("iqs=%d ", iqs);
-                //         }
-                //     }
-                // }
-
-                // clang-format on
                 partial_sum += vec_dot_cute_sycl(x, d_offset, y, iby, iqs, sg_local_id, i, row);
             }
         }
