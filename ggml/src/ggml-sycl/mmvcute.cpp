@@ -7,9 +7,6 @@
 
 #include "mmvcute.hpp"
 
-#include <cstdint>
-#include <cstdio>
-
 #include "dpct/helper.hpp"
 
 #pragma clang diagnostic push
@@ -69,8 +66,8 @@ static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restric
         return;
     }
 
-    const size_t     blocks_per_row      = ncols / qk;
-    constexpr size_t blocks_per_subgroup = safe_div(vdr * WARP_SIZE, qi);  // Ensuring blocks_per_subgroup > 0
+    const size_t     blocks_per_row              = ncols / qk;
+    constexpr size_t blocks_per_subgroup         = safe_div(vdr * WARP_SIZE, qi);  // Ensuring blocks_per_subgroup > 0
     constexpr size_t block_elements_per_subgroup = qi / vdr;
 
     assert(blocks_per_subgroup > 0);
@@ -79,7 +76,7 @@ static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restric
     const block_q_t *  x = (const block_q_t *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
-    // TODO: Change this for the actuabase_row l subgroup id
+    // TODO: Change this for the actual base_row instead of an offset
     for (size_t row = base_row; row < (base_row + rows_per_sg) && row < nrows; row++) {
         float partial_sum = 0.0f;
         for (size_t i = sg.get_local_linear_id() / block_elements_per_subgroup; i < blocks_per_row;
@@ -90,37 +87,64 @@ static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restric
             const size_t ibx_offset = ibx * (qk / qr);
             // ncols / qr -> size of weights in number of bytes
             const size_t d_offset   = (ncols / qr * nrows) + ibx * sizeof(ggml_half);
+            const size_t d_offset2  = (ncols / qr * nrows);
 
             // TODO: Will need adjustment with the Q4_0 blockload
-            const int iby = i * (qk / QK8_1);  // y block index that aligns with ibx
+            // TODO: Change to baseptr + internally calculated offset maybe?
+            // TODO: Even better, reorder q8_1
+            int iby[vdr + 1];
+            // INFO: Quick and not so clear, it's based on the existing approach
+            // blocks_per_sg / vdr maybe?
+            // vdr = 2 means 2 ints calculated per tid
+            //
+            iby[0] = i * (qk / QK8_1);
+            for (size_t q8blocki = 0; q8blocki < vdr; q8blocki++) {
+                // TODO: fix for subsequent iterations
+                iby[q8blocki + 1] = q8blocki * (blocks_per_subgroup / vdr) + (i / 2) * (qk / QK8_1);
+            }
 
+            bool print = false;
             for (size_t elem = 0; elem < block_elements_per_subgroup; elem += WARP_SIZE) {
                 // x block quant index when casting the quants to int
-                const int iqs = elem + vdr * (sg.get_local_linear_id() % block_elements_per_subgroup);
+                const int iqs  = elem + vdr * (sg.get_local_linear_id() % block_elements_per_subgroup);
+                const int iqs2 = elem + (sg.get_local_linear_id() % qi);
 
-                // if (sg_global_id < 4 && nd_item.get_local_id(2) % 1 == 0) {
-                //     // INFO: to have better ganularity on what to print
-                //     for (size_t i = 0; i < nd_item.get_global_range(2); i++) {
-                //         if (cute::thread(i)) {
-                //             cute::print("mul_mat_vec_ocl: ");
-                //             cute::print("tid=%d ", nd_item.get_global_linear_id());
-                //             cute::print("item<2>=%d ", nd_item.get_local_id(2));
-                //             cute::print("local_id<2>=%d ", sg.get_local_linear_id());
-                //             cute::print("row=%d, ", row);
-                //             // cute::print("bpr=%d ", blocks_per_row);
-                //             // cute::print("bps=%d ", blocks_per_subgroup);
-                //             // cute::print("eps=%d ", block_elements_per_subgroup);
-                //             cute::print("i=%d ", i);
-                //             cute::print("elem=%d ", elem);
-                //             cute::print("ibx=%zu ", ibx);
-                //             cute::print("newibx=%zu ", ibx_offset);
-                //             // cute::print("iby=%d ", iby);
-                //             cute::print("iqs=%d", iqs);
-                //             cute::print("\n");
-                //         }
-                //     }
-                // }
-                partial_sum += vec_dot_cute_sycl(x, &y[iby], iqs, ibx_offset, d_offset);
+                // clang-format off
+                if (sg_global_id < 1
+                        // && nd_item.get_local_id(2) % 4 == 0
+                        // && i == sg.get_local_linear_id() / block_elements_per_subgroup
+                        ) {
+                    print = true;
+                    // INFO: to have better ganularity on what to print
+                    for (size_t j = 0; j < nd_item.get_global_range(2); j++) {
+                        if (cute::thread(j)) {
+                            if (cute::thread0()) {
+                                cute::print("\nmul_mat_vec_ocl: blocks_per_sg=%zu", blocks_per_subgroup);
+                            }
+                            cute::print("\nmul_mat_vec_ocl: ");
+                            cute::print("tid=%d ", nd_item.get_global_linear_id());
+                            cute::print("item<2>=%d ", nd_item.get_local_id(2));
+                            cute::print("local_id<2>=%d ", sg.get_local_linear_id());
+                            cute::print("row=%d, ", row);
+                            // cute::print("bpr=%d ", blocks_per_row);
+                            // cute::print("bps=%d ", blocks_per_subgroup);
+                            // cute::print("eps=%d ", block_elements_per_subgroup);
+                            // cute::print("i=%d ", i);
+                            // cute::print("elem=%d ", elem);
+                            // cute::print("ibx=%zu ", ibx);
+                            // cute::print("ibx_offset=%zu ", ibx_offset);
+                            // cute::print("iby=%d ", iby);
+                            cute::print("iby[0]=%d ", iby[0]);
+                            cute::print("iby[1]=%d ", iby[1]);
+                            cute::print("iby[2]=%d ", iby[2]);
+                            cute::print("iqs=%d ", iqs);
+                            cute::print("iqs2=%d ", iqs2);
+                        }
+                    }
+                }
+                // clang-format on
+                partial_sum += vec_dot_cute_sycl(x, iqs, ibx_offset, d_offset, d_offset2, y, iby, iqs2,
+                                                 sg.get_local_linear_id(), i, row, print);
             }
         }
 
@@ -131,103 +155,37 @@ static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restric
     }
 }
 
-template <int qk, int qi, typename block_q_t, int vdr, vec_dot_cute_sycl_t vec_dot_cute_sycl /* , class Tensor_VX */
-          /*, class TensorVY, class TensorDST */>
-static void mul_mat_vec_cute(/* Tensor_VX tensor_vx, */ const void * vx, /* TensorVY */ const void * vy,
-                             float * /* TensorDST */ dst, const int ncols, const int nrows,
-                             const sycl::nd_item<3> & nd_item) {
-    const int row = nd_item.get_group(2) * nd_item.get_local_range(1) + nd_item.get_local_id(1);
+static __dpct_inline__ float vec_dot_q4_0_q8_1_impl2(const int * v, const int * u, const float & d4_0,
+                                                     const float & d4_1, const sycl::half2 & ds8_0,
+                                                     const sycl::half2 & ds8_1) {
+    int sumi0 = 0;
+    int sumi1 = 0;
 
-    if (row >= nrows) {
-        return;
-    }
+    constexpr size_t VDR_Q4_0_Q8_1_MMVCUTE = quants::reordered::block_q4_0::traits::vdr_q8_1;
+    static_assert(VDR_Q4_0_Q8_1_MMVCUTE == 2, "This implementation assumes VDR = 2");
 
-    const int     blocks_per_row      = ncols / qk;
-    constexpr int blocks_per_subgroup = safe_div(vdr * WARP_SIZE, qi);  // Ensuring blocks_per_subgroup > 0
+    const sycl::float2 ds8f0 = ds8_0.convert<float, sycl::rounding_mode::automatic>();
+    const sycl::float2 ds8f1 = ds8_1.convert<float, sycl::rounding_mode::automatic>();
 
-    constexpr int block_elements_per_subgroup = qi / vdr;
+#pragma unroll
+    for (size_t i = 0; i < VDR_Q4_0_Q8_1_MMVCUTE; ++i) {
+        const int vi0 = (v[i] >> 0) & 0x0F0F0F0F;
+        const int vi1 = (v[i] >> 4) & 0x0F0F0F0F;
 
-    assert(blocks_per_subgroup > 0);
-    assert(block_elements_per_subgroup > 0);
-
-    // partial sum for each thread
-    float partial_sum = 0.0f;
-
-    // using Element_VX        = typename Tensor_VX::value_type;
-    // using Copy_Thread_Shape = cute::Shape<cute::Int<WARP_SIZE>, cute::_1>;
-    // using Traits_Load_VX    = cute::Copy_Traits<cute::XE_2D_U8x1x32_LD_N, Tensor_VX>;
-    // using Atom_Load_VX      = cute::Copy_Atom<Traits_Load_VX, Element_VX>;
-
-    // auto tiled_copy_load_vx =
-    //     make_tiled_copy(Atom_Load_VX{}.with(tensor_vx), cute::Layout<Copy_Thread_Shape>{},
-    //                     cute::make_layout(cute::shape_div(typename Traits_Load_VX::BlockShape{}, Copy_Thread_Shape{})));
-
-    // auto         subgroup               = nd_item.get_sub_group();
-    // auto         first_thread_in_sg_idx = subgroup.get_group_linear_id() * WARP_SIZE;
-    // cute::Tensor tCgA                   = thr_mma.partition_A(gA);
-
-    // auto         thr_copy_A = tiled_copy_load_vx.get_slice(nd_item.get_local_id(2));
-    // cute::Tensor tVX =
-    //     cute::make_tensor<Element_VX>(cute::make_shape(cute::C<Atom_Load_VX::NumValDst>{}, cute::_1{}, cute::_1{}));
-
-    // auto blk_load_s = cute::get_pvc_tensor(tensor_vx.shape());
-    // auto thread_s   = thr_copy_A.partition_S(blk_load_s(cute::_, cute::_, 0));
-
-    // clang-format off
-#if 0
-    // if (cute::thread0()) {
-    //     cute::print("tensor_vx: "); cute::print(tensor_vx); cute::print("\n");
-    //     cute::print("thr_copy_A: "); cute::print(thr_copy_A); cute::print("\n");
-    //     // cute::print("cute_tensor_vy: "); cute::print(cute_tensor_vy); cute::print("\n");
-    //     // cute::print("cute_tensor_dst: "); cute::print(cute_tensor_dst); cute::print("\n");
-    //     cute::print("thr_copy_A: "); cute::print(thr_copy_A); cute::print("\n");
-    //     // cute::print("blk_load_s: "); cute::print(blk_load_s); cute::print("\n");
-    //     // cute::print("thread_s: "); cute::print(thread_s); cute::print("\n");
-    //     cute::print("\n\n");
-    // }
-    syncthreads();
-    // if (cute::thread(1 * WARP_SIZE)) {
-    //     cute::print("tensor_vx: "); cute::print(tensor_vx); cute::print("\n");
-    //     cute::print("thr_copy_A: "); cute::print(thr_copy_A); cute::print("\n");
-    //     // cute::print("cute_tensor_vy: "); cute::print(cute_tensor_vy); cute::print("\n");
-    //     // cute::print("cute_tensor_dst: "); cute::print(cute_tensor_dst); cute::print("\n");
-    // }
-#endif
-    // clang-format on
-
-    const block_q_t *  x = (const block_q_t *) vx;
-    const block_q8_1 * y = (const block_q8_1 *) vy;
-
-    // Prefetch 0, 1 from B two iby[values]
-    // Prefetch 0, 1 from A two ibx[] values
-
-    for (size_t i = nd_item.get_local_id(2) / block_elements_per_subgroup; i < blocks_per_row;
-         i += blocks_per_subgroup) {
-        const int ibx = row * blocks_per_row + i;  // x block index
-
-        const int iby = i * (qk / QK8_1);          // y block index that aligns with ibx
-
-        for (size_t elem = 0; elem < block_elements_per_subgroup; elem += WARP_SIZE) {
-            // x block quant index when casting the quants to int
-            const int iqs = elem + vdr * (nd_item.get_local_id(2) % block_elements_per_subgroup);
-
-            partial_sum += vec_dot_cute_sycl(&x[ibx], &y[iby], iqs);
-
-            if (nd_item.get_local_id(2) == 0) {
-                cute::print(
-                    "mul_mat_vec_cute: tid=%d item<2>=%d row=%d, bpr=%d bps=%d eps=%d i=%d elem=%d ibx=%d iby=%d "
-                    "iqs=%d,partial_sum=%.8f\n",
-                    nd_item.get_global_linear_id(), nd_item.get_local_id(2), row, blocks_per_row, blocks_per_subgroup,
-                    block_elements_per_subgroup, i, elem, ibx, iby, iqs, partial_sum);
-            }
+        // TODO: Branchless
+        if (i == 0) {
+            sumi0 = dpct::dp4a(vi0, u[2 * i + 0], sumi0);
+            sumi0 = dpct::dp4a(vi1, u[2 * i + 1], sumi0);
+        } else if (i == 1) {
+            sumi1 = dpct::dp4a(vi0, u[2 * i + 0], sumi1);
+            sumi1 = dpct::dp4a(vi1, u[2 * i + 1], sumi1);
         }
     }
 
-    auto sum = sycl::reduce_over_group(nd_item.get_sub_group(), partial_sum, std::plus<>());
+    float dot0 = sumi0 * ds8f0.x() - ((8 / QI4_0) * ds8f0.y());
+    float dot1 = sumi1 * ds8f1.x() - ((8 / QI4_0) * ds8f1.y());
 
-    if (nd_item.get_local_id(2) == 0) {
-        dst[row] = sum;
-    }
+    return d4_0 * dot0 + d4_1 * dot1;
 }
 
 static __dpct_inline__ float vec_dot_q4_0_q8_1_impl(const int * v, const int * u, const float & d4,
@@ -251,49 +209,99 @@ static __dpct_inline__ float vec_dot_q4_0_q8_1_impl(const int * v, const int * u
     return d4 * (sumi * ds8f.x() - (8 * VDR_Q4_0_Q8_1_MMVCUTE / QI4_0) * ds8f.y());
 }
 
-static __dpct_inline__ float vec_dot_q4_0_q8_1(const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1,
-                                               const int & iqs, const int ibx_offset, const int d_offset) {
-#ifdef __SYCL_DEVICE_ONLY__
-    // vector_t<int, 2> coord = { iqs, 0 };
-    // *reinterpret_cast<vector_t<ushort, 2> *>(v) =
-    // u8 -> atomic value to bytes
-    // m1 -> vertical dimension
-    // k32 -> k-dimension size (also deifnes the stride of the values received by threads)
-    // v2 -> 2 values
-    // This translates to 64 bytes loaded, in two pairs of two bytes because:
-    //   k32 * v2 = 64 u8 values,
-    //   v2 = two blocks loaded 64 / 2 -> 32 u8 values are loaded per block,
-    //   32 / WARP_SIZE = 2 values per thread
-    // detail::__builtin_IB_subgroup_block_read_flat_u8_m1k32v2((long) (vbq), 512 * sizeof(uint8_t) - 1, 16 - 1,
-    //                                                          512 * sizeof(uint8_t) - 1, coord);
+static __dpct_inline__ float vec_dot_q4_0_q8_1(const void * __restrict__ vbq, const int & iqs, const int ibx_offset,
+                                               const int d_offset, const int                      d_offset2,
+                                               const block_q8_1 * __restrict__ bq8_1, const int * iby, const int & iqs2,
+                                               [[maybe_unused]] const int tid, [[maybe_unused]] const int i,
+                                               [[maybe_unused]] const size_t row, [[maybe_unused]] bool print) {
+    using q4_0_traits                      = quants::reordered::block_q4_0::traits;
+    constexpr size_t VDR_Q4_0_Q8_1_MMVCUTE = q4_0_traits::vdr_q8_1;
 
-    // baseoffset ALWAYS BEGINNING OF MEM REGION
-    // Dimensions are defined by builtin (1k16v1) 1 x (16 * 1)
-    // width (bytes)     -> actual width in bytes of the memory region
-    // height (elements) -> 1
-    // pitch (bytes)     -> helps defining the subblock of memory to access
-    // x,y coord like system that helps identifying the block to load. Row major.
-    // detail::__builtin_IB_subgroup_block_read_flat_u32_m1k16v1
+#ifdef __SYCL_DEVICE_ONLY__
+    constexpr size_t blocks_per_subgroup = safe_div(q4_0_traits::vdr_q8_1 * WARP_SIZE, q4_0_traits::qi);
+    int              v_block[VDR_Q4_0_Q8_1_MMVCUTE];
+    vector_t<int, 2> coord[VDR_Q4_0_Q8_1_MMVCUTE];
+    for (size_t iq = 0; iq < q4_0_traits::vdr_q8_1; iq++) {
+        coord[iq] = { (i / blocks_per_subgroup) * (q4_0_traits::vdr_q8_1 * WARP_SIZE) + (tid + iq * WARP_SIZE), row };
+        size_t width  = 512 * sizeof(uint8_t);  // INFO: Size in bytes of block aka ncols / traits::qi
+        size_t height = 16;                     // INFO: nrows
+
+        // *reinterpret_cast<vector_t<ushort, 2> *>(v) =
+        // u8 -> atomic value to bytes
+        // m1 -> vertical dimension
+        // k32 -> k-dimension size (also deifnes the stride of the values received by threads)
+        // v2 -> 2 values
+        // This translates to 64 bytes loaded, in two pairs of two bytes because:
+        //   k32 * v2 = 64 u8 values,
+        //   v2 = two blocks loaded 64 / 2 -> 32 u8 values are loaded per block,
+        //   32 / WARP_SIZE = 2 values per thread
+        // detail::__builtin_IB_subgroup_block_read_flat_u8_m1k32v2((long) (vbq), 512 * sizeof(uint8_t) - 1, 16 - 1,
+        //                                                          512 * sizeof(uint8_t) - 1, coord);
+
+        // baseoffset ALWAYS BEGINNING OF MEM REGION
+        // Dimensions are defined by builtin (1k16v1) 1 x (16 * 1)
+        // width (bytes)     -> actual width in bytes of the memory region
+        // height (elements) -> 1
+        // pitch (bytes)     -> helps defining the subblock of memory to access
+        // x,y coord like system that helps identifying the block to load. Row major.
+        // detail::__builtin_IB_subgroup_block_read_flat_u32_m1k16v1
+        *reinterpret_cast<uint *>(&v_block[iq]) = __builtin_IB_subgroup_block_read_flat_u32_m1k16v1(
+            (long) (vbq), width - 1, height - 1, width - 1, coord[iq]);
+    }
 #endif
 
-    constexpr size_t VDR_Q4_0_Q8_1_MMVCUTE = quants::reordered::block_q4_0::traits::vdr_q8_1;
-    const uint8_t *  bq4_0                 = static_cast<const uint8_t *>(vbq) + ibx_offset;
-    const ggml_half  d = *(reinterpret_cast<const ggml_half *>(static_cast<const uint8_t *>(vbq) + d_offset));
-    int              v[VDR_Q4_0_Q8_1_MMVCUTE];
-    int              u[2 * VDR_Q4_0_Q8_1_MMVCUTE];  // q8 bytes == 2 * q4 bytes
+    const uint8_t * bq4_0 = static_cast<const uint8_t *>(vbq) + ibx_offset;
+    const ggml_half d     = *(reinterpret_cast<const ggml_half *>(static_cast<const uint8_t *>(vbq) + d_offset));
+    int             v[VDR_Q4_0_Q8_1_MMVCUTE];
+    int             u[2 * VDR_Q4_0_Q8_1_MMVCUTE];   // q8 bytes == 2 * q4 bytes
+    int             u2[2 * VDR_Q4_0_Q8_1_MMVCUTE];  // q8 bytes == 2 * q4 bytes
 
 #pragma unroll
-
     for (size_t i = 0; i < VDR_Q4_0_Q8_1_MMVCUTE; ++i) {
-        v[i]         = get_int_from_uint8(bq4_0, iqs + i);             // A
-        u[2 * i + 0] = get_int_from_int8_aligned(bq8_1->qs, iqs + i);  // B
-        u[2 * i + 1] = get_int_from_int8_aligned(bq8_1->qs, iqs + i + QI4_0);
+        v[i]         = get_int_from_uint8(bq4_0, iqs + i);                        // A
+        u[2 * i + 0] = get_int_from_int8_aligned((&bq8_1[iby[0]])->qs, iqs + i);  // B
+        u[2 * i + 1] = get_int_from_int8_aligned((&bq8_1[iby[0]])->qs, iqs + i + QI4_0);
+    }
+    for (size_t i = 0; i < VDR_Q4_0_Q8_1_MMVCUTE; ++i) {
+        u2[2 * i + 0] = get_int_from_int8_aligned((&bq8_1[iby[i + 1]])->qs, iqs2);  // B
+        u2[2 * i + 1] = get_int_from_int8_aligned((&bq8_1[iby[i + 1]])->qs, iqs2 + QI4_0);
     }
 
-    // cute::print("ibx_offset=%zu, d_offset=%zu, v[0]=%d, v[1]=%d, d=%.8f\n", ibx_offset, d_offset, v[0], v[1],
-    //             static_cast<float>(d));
+    auto res = vec_dot_q4_0_q8_1_impl(v, u, d, (&bq8_1[iby[0]])->ds);
 
-    return vec_dot_q4_0_q8_1_impl(v, u, d, bq8_1->ds);
+#ifdef __SYCL_DEVICE_ONLY__
+    const ggml_half d1   = *(reinterpret_cast<const ggml_half *>(static_cast<const uint8_t *>(vbq) + d_offset2 + 2 * (coord[0][0] / 4)));
+    const ggml_half d2   = *(reinterpret_cast<const ggml_half *>(static_cast<const uint8_t *>(vbq) + d_offset2 + 2 * (coord[1][0] / 4)));
+    auto            res2 = vec_dot_q4_0_q8_1_impl2(v_block, u2, d1, d2, (&bq8_1[iby[1]])->ds, (&bq8_1[iby[2]])->ds);
+
+    auto sg   = syclcompat::get_nd_item<1>().get_sub_group();
+    auto sum  = sycl::reduce_over_group(sg, res, std::plus<>());
+    auto sum2 = sycl::reduce_over_group(sg, res2, std::plus<>());
+    if (print) {
+        cute::print("\ntid=%d, v(%d), d=%.8f", tid, v[0], static_cast<float>(d));
+        cute::print("\ntid=%d, coord=%d, v_block(%d), d=%.8f", tid, coord[0][0], v_block[0], static_cast<float>(d1));
+        cute::print("\ntid=%d, v(%d), d=%.8f", tid, v[1], static_cast<float>(d));
+        cute::print("\ntid=%d, coord=%d, v_block(%d), d=%.8f", tid, coord[1][0], v_block[1], static_cast<float>(d2));
+        // cute::print("\ntid=%d, (iqs + i)=%d, (iqs + i + QI4_0)=%d", tid, iqs, iqs + QI4_0);
+        // cute::print("\ntid=%d, (iqs2 + i)=%d, (iqs2 + i + QI4_0)=%d", tid, iqs2, iqs2 + QI4_0);
+        // cute::print("\ntid=%d, v(%d), u(%d, %d), d=%.8f", tid, v[0], u[0], u[1],
+        //             static_cast<float>(d));
+        // cute::print("\ntid=%d, v_block(%d), u2(%d, %d), d=%.8f", tid, v_block[0], u2[0], u2[1],
+        //             static_cast<float>(d));
+        // cute::print("\ntid=%d, v(%d), u(%d, %d), d=%.8f", tid, v[1], u[2], u[3],
+        //             static_cast<float>(d));
+        // cute::print("\ntid=%d, v_block(%d), u2(%d, %d), d=%.8f", tid, v_block[1], u2[2], u2[3],
+        //             static_cast<float>(d));
+        // cute::print("\ntid=%d, iby=%d, iqs=%d, v(%d), v_block(%d), u(%d), u2(%d)", tid, iby[0], iqs + 1, v[1],
+        // v_block[1], u[2], u2[2]);
+        cute::print("\ntid=%d, res1=%.8f, res2=%.8f", tid, res, res2);
+        cute::print("\ntid=%d, sum1=%.8f, sum2=%.8f", tid, sum, sum2);
+    }
+
+    return res;
+#endif
+
+    return 0;
 }
 
 // NOTE: Will only work with GGML_SYCL_DISABLE_OPT=1 for now
