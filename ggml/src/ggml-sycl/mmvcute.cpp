@@ -10,7 +10,6 @@
 #include "dpct/helper.hpp"
 #include "ggml.h"
 
-
 static __dpct_inline__ int get_int_from_uint8(const uint8_t * x8, const int & i32) {
     const uint16_t * x16 = (const uint16_t *) (x8 + sizeof(int) * i32);  // assume at least 2 byte
                                                                          // alignment
@@ -31,9 +30,9 @@ constexpr size_t safe_div(const size_t m, const size_t n) {
     return (m + n - 1) / n;
 }
 
-template <ggml_type q_t, vec_dot_cute_sycl_t vec_dot_cute_sycl, size_t rows_per_sg = 1>
+template <ggml_type q_t, vec_dot_cute_sycl_t vec_dot_cute_sycl, uint32_t rows_per_sg = 1>
 static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-                            const size_t ncols, const size_t nrows, const sycl::nd_item<3> & nd_item) {
+                            const uint32_t ncols, const uint32_t nrows, const sycl::nd_item<3> & nd_item) {
     using block_traits = typename ggml_sycl_reordered::block_q_t<q_t>::traits;
     using block_type   = ggml_sycl_reordered::block_q_t<q_t>;
 
@@ -44,44 +43,35 @@ static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restric
     const int  sg_local_id  = sg.get_local_linear_id();
     const int  sg_global_id = workgroup_id * sg_range + sg_id;
 
-    const size_t base_row = rows_per_sg * sg_global_id;
+    const uint32_t base_row = rows_per_sg * sg_global_id;
     if (base_row >= nrows) {
         return;
     }
 
-    const size_t     blocks_per_row = ncols / block_traits::qk;
-    constexpr size_t blocks_per_subgroup =
+    const uint32_t     blocks_per_row = ncols / block_traits::qk;
+    constexpr uint32_t blocks_per_subgroup =
         safe_div(block_traits::vdr_mmvq * WARP_SIZE, block_traits::qi);  // Ensuring blocks_per_subgroup > 0
-    constexpr size_t block_elements_per_subgroup = block_traits::qi / block_traits::vdr_mmvq;
+    constexpr uint32_t block_elements_per_subgroup = block_traits::qi / block_traits::vdr_mmvq;
 
     assert(blocks_per_subgroup > 0);
     assert(block_elements_per_subgroup > 0);
 
     const block_type * x = (const block_type *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
-    for (size_t row = base_row; row < (base_row + rows_per_sg) && row < nrows; row++) {
+    for (uint32_t row = base_row; row < (base_row + rows_per_sg) && row < nrows; row++) {
         float partial_sum = 0.0f;
-        for (size_t i = sg_local_id / block_elements_per_subgroup; i < blocks_per_row; i += blocks_per_subgroup) {
-            const size_t scales_per_row = ncols / block_traits::qk;
-            // ncols / block_traits::qr -> bytes of quants
-            const size_t d_offset       = (ncols / block_traits::qr * nrows) + scales_per_row * row * sizeof(ggml_half);
+        for (uint32_t i = sg_local_id / block_elements_per_subgroup; i < blocks_per_row; i += blocks_per_subgroup) {
+            const uint32_t base_iq_index  = (i / blocks_per_subgroup) * (block_traits::vdr_mmvq * WARP_SIZE);
+            const uint32_t scales_per_row = ncols / block_traits::qk;
+            const uint32_t d_offset       = (ncols / block_traits::qr * nrows) + scales_per_row * row * sizeof(ggml_half);
 
-            // TODO: Change to baseptr + internally calculated offset, prefetch + load.
-            // TODO: Reorder q8_1?
-            int iby[block_traits::vdr_mmvq];
-            for (size_t q = 0; q < block_traits::vdr_mmvq; q++) {
-                // quant block (an int) that is loaded on X
-                // Row not needed because each row is independent
-                size_t quant_coord =
-                    (i / blocks_per_subgroup) * (block_traits::vdr_mmvq * WARP_SIZE) + (sg_local_id + q * WARP_SIZE);
-                iby[q] = (quant_coord / block_traits::qi) * (block_traits::qk / QK8_1);
-            }
+            const ggml_half * d4s = reinterpret_cast<const ggml_half *>(static_cast<const uint8_t *>(vx) + d_offset);
 
-            for (size_t elem = 0; elem < block_elements_per_subgroup; elem += WARP_SIZE) {
+            for (uint32_t elem = 0; elem < block_elements_per_subgroup; elem += WARP_SIZE) {
                 // block quant index of the row when casting the quants to int
                 const int iqs = elem + (sg_local_id % block_traits::qi);
 
-                partial_sum += vec_dot_cute_sycl(x, d_offset, y, iby, iqs, sg_local_id, i, row);
+                partial_sum += vec_dot_cute_sycl(x, d4s, y, iqs, base_iq_index, ncols, nrows, row);
             }
         }
 
@@ -110,37 +100,37 @@ static __dpct_inline__ float vec_dot_q4_0_q8_1_impl(const int v, const int u0, c
     return d4 * dot;
 }
 
-// TODO: d_offset -> d_ptr to beginning of row
-static __dpct_inline__ float vec_dot_q4_0_q8_1(const void * __restrict__ vbq, const int           d_offset,
-                                               const block_q8_1 * __restrict__ bq8_1, const int * iby, const int & iqs,
-                                               const int tid, const int i, [[maybe_unused]] const size_t row) {
+static __dpct_inline__ float vec_dot_q4_0_q8_1([[maybe_unused]] const void * __restrict__ vbq, const ggml_half * d4s,
+                                               const block_q8_1 * __restrict__ bq8_1, const uint32_t iqs,
+                                               const uint32_t base_iq_index, [[maybe_unused]] const uint32_t ncols,
+                                               [[maybe_unused]] const uint32_t nrows, [[maybe_unused]] const uint32_t row) {
+    using sycl::ext::oneapi::this_work_item::get_sub_group;
     using q4_0_traits                    = typename ggml_sycl_reordered::block_q_t<GGML_TYPE_Q4_0>::traits;
-    constexpr size_t blocks_per_subgroup = safe_div(q4_0_traits::vdr_mmvq * WARP_SIZE, q4_0_traits::qi);
+    constexpr uint32_t blocks_per_subgroup = safe_div(q4_0_traits::vdr_mmvq * WARP_SIZE, q4_0_traits::qi);
+    const int        local_id            = get_sub_group().get_local_linear_id();
 
     float dot = 0.f;
 
-    const size_t base_col = (i / blocks_per_subgroup) * (q4_0_traits::vdr_mmvq * WARP_SIZE);
 #pragma unroll
-    for (size_t iq = 0; iq < q4_0_traits::vdr_mmvq; iq++) {
+    for (uint32_t q = 0; q < q4_0_traits::vdr_mmvq; q++) {
         int v = 0;
 
-        const size_t     col   = base_col + (iq * WARP_SIZE + tid);
-        vector_t<int, 2> coord = { col, row };
+        const uint32_t     iq_index = base_iq_index + (q * WARP_SIZE + local_id);
+        vector_t<int, 2> coord    = { iq_index, row };
+        const int        ibq8_1   = (iq_index / q4_0_traits::qi) * (q4_0_traits::qk / QK8_1);
 
 #ifdef __SYCL_DEVICE_ONLY__
-        size_t width  = 512 * sizeof(uint8_t);  // INFO: Size in bytes of block aka ncols / traits::qi
-        size_t height = 16;                     // INFO: nrows
+        size_t width  = ncols / (q4_0_traits::qr);
+        size_t height = nrows;  // INFO: nrows
 
-        *reinterpret_cast<uint *>(&v) =
-            __builtin_IB_subgroup_block_read_flat_u32_m1k16v1((long) (vbq), width - 1, height - 1, width - 1, coord);
+        *reinterpret_cast<uint *>(&v) = detail::__builtin_IB_subgroup_block_read_flat_u32_m1k16v1(
+            (long) (vbq), width - 1, height - 1, width - 1, coord);
 #endif
 
-        const ggml_half d4 = *(reinterpret_cast<const ggml_half *>(static_cast<const uint8_t *>(vbq) + d_offset +
-                                                                   sizeof(ggml_half) * (col / 4)));
-
-        const auto & b  = bq8_1[iby[iq]];
-        const int    u0 = get_int_from_int8_aligned(b.qs, iqs);
-        const int    u1 = get_int_from_int8_aligned(b.qs, iqs + q4_0_traits::qi);
+        const ggml_half d4 = d4s[iq_index / (blocks_per_subgroup / 2)];
+        const auto &    b  = bq8_1[ibq8_1];
+        const int       u0 = get_int_from_int8_aligned(b.qs, iqs);
+        const int       u1 = get_int_from_int8_aligned(b.qs, iqs + q4_0_traits::qi);
 
         dot += vec_dot_q4_0_q8_1_impl(v, u0, u1, d4, b.ds);
     }
@@ -149,8 +139,8 @@ static __dpct_inline__ float vec_dot_q4_0_q8_1(const void * __restrict__ vbq, co
 }
 
 // NOTE: Will only work with GGML_SYCL_DISABLE_OPT=1 for now
-static void mul_mat_vec_cute_q4_0_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols,
-                                            const int nrows, dpct::queue_ptr stream) {
+static void mul_mat_vec_cute_q4_0_q8_1_sycl(const void * vx, const void * vy, float * dst, const size_t ncols,
+                                            const size_t nrows, dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK4_0 == 0);
     // TODO: What is the purpose of GGML_SYCL_MMV_Y
     const int        block_num_y    = safe_div(nrows, GGML_SYCL_MMV_Y);
