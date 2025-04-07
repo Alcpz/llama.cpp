@@ -10,23 +10,7 @@
 #include "dpct/helper.hpp"
 #include "ggml.h"
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
-#pragma clang diagnostic ignored "-Wunused-parameter"
-#pragma clang diagnostic ignored "-Wgnu-anonymous-struct"
-#pragma clang diagnostic ignored "-Wnested-anon-types"
-#pragma clang diagnostic ignored "-Wsign-compare"
-#pragma clang diagnostic ignored "-Wmissing-noreturn"
-#pragma clang diagnostic ignored "-Wunused-variable"
-#pragma clang diagnostic ignored "-Wcast-qual"
-#pragma clang diagnostic ignored "-Wunused-local-typedef"
 
-#include <cute/tensor.hpp>
-#include <cute/util/debug.hpp>
-
-#pragma clang diagnostic pop
-
-// TODO: Figure this out
 static __dpct_inline__ int get_int_from_uint8(const uint8_t * x8, const int & i32) {
     const uint16_t * x16 = (const uint16_t *) (x8 + sizeof(int) * i32);  // assume at least 2 byte
                                                                          // alignment
@@ -38,7 +22,6 @@ static __dpct_inline__ int get_int_from_uint8(const uint8_t * x8, const int & i3
     return x32;
 }
 
-// TODO: Figure this out
 static __dpct_inline__ int get_int_from_int8_aligned(const int8_t * x8, const int & i32) {
     return *((const int *) (x8 + sizeof(int) * i32));  // assume at least 4 byte alignment
 }
@@ -48,7 +31,6 @@ constexpr size_t safe_div(const size_t m, const size_t n) {
     return (m + n - 1) / n;
 }
 
-// TODO: create a traits struct for qk, qi, qr
 template <ggml_type q_t, vec_dot_cute_sycl_t vec_dot_cute_sycl, size_t rows_per_sg = 1>
 static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
                             const size_t ncols, const size_t nrows, const sycl::nd_item<3> & nd_item) {
@@ -179,25 +161,9 @@ static void mul_mat_vec_cute_q4_0_q8_1_sycl(const void * vx, const void * vy, fl
     const sycl::range<3> global_size(1, GGML_SYCL_MMV_Y, (block_num_y * WARP_SIZE) / rows_per_sg);
     const sycl::range<3> wg_size(1, GGML_SYCL_MMV_Y, cute_sg_per_wg * WARP_SIZE);
 
-    // TODO: It may be simpler to switch around the shape and set it to LayoutLeft
-    // vx is (ncols, nrows), vy is (ncols, 1), dst (nrows, 1), where dims are 0..1
-    // auto vec_dot_shape  = cute::make_shape(1, ncols, nrows);
-    // auto cute_tensor_vx = cute::make_tensor(cute::make_gmem_ptr(static_cast<const uint8_t *>(vx)),
-    //                                         cute::make_layout(cute::select<1, 2>(vec_dot_shape), cute::LayoutLeft{}));
-    // auto cute_tensor_vy = cute::make_tensor(static_cast<const uint8_t *>(vy),
-    //                                         cute::make_layout(cute::select<1, 0>(vec_dot_shape), cute::LayoutRight{}));
-    // auto cute_tensor_dst =
-    //     cute::make_tensor(dst, cute::make_layout(cute::select<2, 0>(vec_dot_shape), cute::LayoutRight{}));
-    // printf("nrows=%d, ncols=%d\n", nrows, ncols);
-    // printf("global_size=%zu,%zu,%zu, local_size=%zu,%zu,%zu\n", global_size[0], global_size[1], global_size[2],
-    //        wg_size[0], wg_size[1], wg_size[2]);
-
     stream->submit([&](sycl::handler & cgh) {
         cgh.parallel_for(sycl::nd_range<3>(global_size, wg_size),
                          [=](sycl::nd_item<3> nd_item) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                             // mul_mat_vec_cute<QK4_0, QI4_0, block_q4_0, VDR_Q4_0_Q8_1_MMVCUTE, vec_dot_q4_0_q8_1>(
-                             //     /* cute_tensor_vx, */ vx, vy, dst, ncols, nrows, nd_item);
-
                              mul_mat_vec_ocl<GGML_TYPE_Q4_0, vec_dot_q4_0_q8_1, rows_per_sg>(vx, vy, dst, ncols, nrows,
                                                                                              nd_item);
                          });
@@ -229,12 +195,6 @@ void ggml_sycl_op_mul_mat_vec_cute(ggml_backend_sycl_context & ctx, const ggml_t
             case GGML_TYPE_Q4_0:
                 mul_mat_vec_cute_q4_0_q8_1_sycl(src0_dd_i, src1_ddq_i_bs, dst_dd_i_bs, ne00, row_diff, stream);
                 break;
-            // case GGML_TYPE_Q4_K:
-            //     mul_mat_vec_cute_q4_K_q8_1_sycl(src0_dd_i, src1_ddq_i_bs, dst_dd_i_bs, ne00, row_diff, stream);
-            //     break;
-            // case GGML_TYPE_Q6_K:
-            //     mul_mat_vec_cute_q6_K_q8_1_sycl(src0_dd_i, src1_ddq_i_bs, dst_dd_i_bs, ne00, row_diff, stream);
-            //     break;
             default:
                 GGML_ABORT("Unsupported quantization reached in mmvcute");
         }
