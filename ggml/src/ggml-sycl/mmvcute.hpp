@@ -11,7 +11,7 @@
 #include "common.hpp"
 
 typedef float (*vec_dot_cute_sycl_t)(const void * __restrict__ vbq,
-                                     const int & iqs, const int ibx_offset, const int d_offset, const int d_offset2, const block_q8_1 * __restrict__ bq8_1, const int * iby,const int & iqs2, const int tid, const int i,
+                                     const int & iqs, const int ibx_offset, const int d_offset, const block_q8_1 * __restrict__ bq8_1, const int * iby,const int & iqs2, const int tid, const int i,
                                      const size_t row, bool print);
 
 // VDR = vec dot ratio, how many contiguous integers each thread processes when the vec dot kernel is called
