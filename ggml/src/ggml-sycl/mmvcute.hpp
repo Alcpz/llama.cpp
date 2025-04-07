@@ -10,14 +10,9 @@
 
 #include "common.hpp"
 
-typedef float (*vec_dot_cute_sycl_t)(const void * __restrict__ vbq,
-                                     const int & iqs, const int ibx_offset, const int d_offset, const block_q8_1 * __restrict__ bq8_1, const int * iby,const int & iqs2, const int tid, const int i,
-                                     const size_t row, bool print);
-
-// VDR = vec dot ratio, how many contiguous integers each thread processes when the vec dot kernel is called
-// Defined by how the vec dot algorithm is written
-constexpr size_t VDR_Q6_K_Q8_1_MMVCUTE = 1;
-constexpr size_t VDR_Q4_K_Q8_1_MMVCUTE = 2;
+typedef float (*vec_dot_cute_sycl_t)(const void * __restrict__ vbq, const int           d_offset,
+                                     const block_q8_1 * __restrict__ bq8_1, const int * iby, const int & iqs2,
+                                     const int tid, const int i, const size_t row);
 
 #ifdef __SYCL_DEVICE_ONLY__
 template <class T, int N> using vector_t = T __attribute__((ext_vector_type(N)));
@@ -34,24 +29,20 @@ SYCL_EXTERNAL extern "C" uint32_t __builtin_IB_subgroup_block_read_flat_u32_m1k1
 }  // namespace detail
 #endif
 
-namespace quants {
-namespace reordered {
-namespace detail {
+namespace ggml_sycl_reordered {
 
-struct block_q4_0_traits {};
+template <ggml_type type> struct block_q_t;
 
-}  // namespace detail
-
-// Expected
+// Expected memory layout / sizes
 // ncols * nrows / QK4_0          blocks and scales
 // ncols * nrows * QK4_0          quants
 // ncols * nrows * QK4_0 / QR4_0  bytes
-struct block_q4_0 {
+template <> struct block_q_t<GGML_TYPE_Q4_0> {
     struct traits {
         static constexpr size_t qk       = QK4_0;
         static constexpr size_t qi       = QI4_0;
         static constexpr size_t qr       = QR4_0;
-        static constexpr size_t vdr_q8_1 = 2;
+        static constexpr size_t vdr_mmvq = 2;
     };
 
     // qs and d are contiguous in memory, out-of-bounds qs will access to d values
@@ -59,17 +50,15 @@ struct block_q4_0 {
     ggml_half * d;
 };
 
-}  // namespace reordered
-}  // namespace quants
+}  // namespace ggml_sycl_reordered
 
 void ggml_sycl_op_mul_mat_vec_cute(ggml_backend_sycl_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1,
                                    ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,
                                    const char * src1_ddq_i, float * dst_dd_i, int64_t row_low, int64_t row_high,
                                    int64_t src1_ncols, int64_t src1_padded_col_size, const dpct::queue_ptr & stream);
 
-
 // template <int qk, int qi, typename block_q_t, int vdr, vec_dot_cute_sycl_t vec_dot_cute_sycl /* , class Tensor_VX */
-//           /*, class TensorVY, class TensorDST */>
+//           /*, class TensorV[bY, class TensorDST */>
 // static void mul_mat_vec_cute(/* Tensor_VX tensor_vx, */ const void * vx, /* TensorVY */ const void * vy,
 //                              float * /* TensorDST */ dst, const int ncols, const int nrows,
 //                              const sycl::nd_item<3> & nd_item) {
@@ -166,6 +155,5 @@ void ggml_sycl_op_mul_mat_vec_cute(ggml_backend_sycl_context & ctx, const ggml_t
 //         dst[row] = sum;
 //     }
 // }
-
 
 #endif  // GGML_SYCL_MMVCUTE_HPP
