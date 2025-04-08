@@ -8,7 +8,22 @@
 #include "mmvcute.hpp"
 
 #include "dpct/helper.hpp"
-#include "ggml.h"
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wgnu-anonymous-struct"
+#pragma clang diagnostic ignored "-Wnested-anon-types"
+#pragma clang diagnostic ignored "-Wsign-compare"
+#pragma clang diagnostic ignored "-Wmissing-noreturn"
+#pragma clang diagnostic ignored "-Wunused-variable"
+#pragma clang diagnostic ignored "-Wcast-qual"
+#pragma clang diagnostic ignored "-Wunused-local-typedef"
+
+#include <cute/tensor.hpp>
+#include <cute/util/debug.hpp>
+
+#pragma clang diagnostic pop
 
 static __dpct_inline__ int get_int_from_uint8(const uint8_t * x8, const int & i32) {
     const uint16_t * x16 = (const uint16_t *) (x8 + sizeof(int) * i32);  // assume at least 2 byte
@@ -30,9 +45,9 @@ constexpr size_t safe_div(const size_t m, const size_t n) {
     return (m + n - 1) / n;
 }
 
-template <ggml_type q_t, vec_dot_cute_sycl_t vec_dot_cute_sycl, uint32_t rows_per_sg = 1>
+template <ggml_type q_t, vec_dot_cute_sycl_t vec_dot_cute_sycl, size_t pipeline_prefetch = 2, size_t rows_per_sg = 1>
 static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-                            const uint32_t ncols, const uint32_t nrows, const sycl::nd_item<3> & nd_item) {
+                            const size_t ncols, const size_t nrows, const sycl::nd_item<3> & nd_item) {
     using block_traits = typename ggml_sycl_reordered::block_q_t<q_t>::traits;
     using block_type   = ggml_sycl_reordered::block_q_t<q_t>;
 
@@ -43,31 +58,42 @@ static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restric
     const int  sg_local_id  = sg.get_local_linear_id();
     const int  sg_global_id = workgroup_id * sg_range + sg_id;
 
-    const uint32_t base_row = rows_per_sg * sg_global_id;
+    const size_t base_row = rows_per_sg * sg_global_id;
     if (base_row >= nrows) {
         return;
     }
 
-    const uint32_t     blocks_per_row = ncols / block_traits::qk;
-    constexpr uint32_t blocks_per_subgroup =
+    const size_t     blocks_per_row = ncols / block_traits::qk;
+    constexpr size_t blocks_per_subgroup =
         safe_div(block_traits::vdr_mmvq * WARP_SIZE, block_traits::qi);  // Ensuring blocks_per_subgroup > 0
-    constexpr uint32_t block_elements_per_subgroup = block_traits::qi / block_traits::vdr_mmvq;
+    constexpr size_t block_elements_per_subgroup = block_traits::qi / block_traits::vdr_mmvq;
 
     assert(blocks_per_subgroup > 0);
     assert(block_elements_per_subgroup > 0);
 
     const block_type * x = (const block_type *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
-    for (uint32_t row = base_row; row < (base_row + rows_per_sg) && row < nrows; row++) {
+    // Prefetch de 0..1
+    for (size_t num_prefetch = 0; num_prefetch < pipeline_prefetch; num_prefetch++) {
+        // TODO
+    }
+    for (size_t row = base_row; row < (base_row + rows_per_sg) && row < nrows; row++) {
         float partial_sum = 0.0f;
-        for (uint32_t i = sg_local_id / block_elements_per_subgroup; i < blocks_per_row; i += blocks_per_subgroup) {
-            const uint32_t base_iq_index  = (i / blocks_per_subgroup) * (block_traits::vdr_mmvq * WARP_SIZE);
-            const uint32_t scales_per_row = ncols / block_traits::qk;
-            const uint32_t d_offset       = (ncols / block_traits::qr * nrows) + scales_per_row * row * sizeof(ggml_half);
+
+        const size_t scales_per_row = ncols / block_traits::qk;
+        const size_t d_offset       = (ncols / block_traits::qr * nrows) + scales_per_row * row * sizeof(ggml_half);
+
+        for (size_t i = sg_local_id / block_elements_per_subgroup; i < blocks_per_row; i += blocks_per_subgroup) {
+            // prefetch 2 + i
+            const size_t base_iq_index = (i / blocks_per_subgroup) * (block_traits::vdr_mmvq * WARP_SIZE);
+
+            // if (ThreadIdxX() % 256 == 0 || ThreadIdxX() % 256 == 16 || ThreadIdxX() % 256 == 32) {
+            //     cute::print("\n - wid=%d, tid=%d d_offset=%zu", workgroup_id, nd_item.get_global_id(2), (d_offset - (ncols / block_traits::qr * nrows)) / sizeof(ggml_half));
+            // }
 
             const ggml_half * d4s = reinterpret_cast<const ggml_half *>(static_cast<const uint8_t *>(vx) + d_offset);
 
-            for (uint32_t elem = 0; elem < block_elements_per_subgroup; elem += WARP_SIZE) {
+            for (size_t elem = 0; elem < block_elements_per_subgroup; elem += WARP_SIZE) {
                 // block quant index of the row when casting the quants to int
                 const int iqs = elem + (sg_local_id % block_traits::qi);
 
@@ -100,24 +126,27 @@ static __dpct_inline__ float vec_dot_q4_0_q8_1_impl(const int v, const int u0, c
     return d4 * dot;
 }
 
+// TODO: d_offset -> d_ptr to beginning of row
 static __dpct_inline__ float vec_dot_q4_0_q8_1([[maybe_unused]] const void * __restrict__ vbq, const ggml_half * d4s,
-                                               const block_q8_1 * __restrict__ bq8_1, const uint32_t iqs,
-                                               const uint32_t base_iq_index, [[maybe_unused]] const uint32_t ncols,
-                                               [[maybe_unused]] const uint32_t nrows, [[maybe_unused]] const uint32_t row) {
+                                               const block_q8_1 * __restrict__ bq8_1, const size_t               iqs,
+                                               const size_t base_iq_index, [[maybe_unused]] const size_t ncols,
+                                               [[maybe_unused]] const size_t nrows, [[maybe_unused]] const size_t row) {
     using sycl::ext::oneapi::this_work_item::get_sub_group;
     using q4_0_traits                    = typename ggml_sycl_reordered::block_q_t<GGML_TYPE_Q4_0>::traits;
-    constexpr uint32_t blocks_per_subgroup = safe_div(q4_0_traits::vdr_mmvq * WARP_SIZE, q4_0_traits::qi);
+    constexpr size_t blocks_per_subgroup = safe_div(q4_0_traits::vdr_mmvq * WARP_SIZE, q4_0_traits::qi);
+    const int        global_id           = sycl::ext::oneapi::this_work_item::get_nd_item<3>().get_global_id(2);
+    const int        workgroup_id        = sycl::ext::oneapi::this_work_item::get_nd_item<3>().get_group_linear_id();
     const int        local_id            = get_sub_group().get_local_linear_id();
+    const int        sg_id               = get_sub_group().get_group_linear_id();
 
     float dot = 0.f;
 
 #pragma unroll
-    for (uint32_t q = 0; q < q4_0_traits::vdr_mmvq; q++) {
-        int v = 0;
+    for (size_t q = 0; q < q4_0_traits::vdr_mmvq; q++) {
+        uint v = 0;
 
-        const uint32_t     iq_index = base_iq_index + (q * WARP_SIZE + local_id);
-        vector_t<int, 2> coord    = { iq_index, row };
-        const int        ibq8_1   = (iq_index / q4_0_traits::qi) * (q4_0_traits::qk / QK8_1);
+        const size_t     load_sg_index = base_iq_index + (q * WARP_SIZE);
+        vector_t<int, 2> coord         = { load_sg_index, row };
 
 #ifdef __SYCL_DEVICE_ONLY__
         size_t width  = ncols / (q4_0_traits::qr);
@@ -127,10 +156,24 @@ static __dpct_inline__ float vec_dot_q4_0_q8_1([[maybe_unused]] const void * __r
             (long) (vbq), width - 1, height - 1, width - 1, coord);
 #endif
 
-        const ggml_half d4 = d4s[iq_index / (blocks_per_subgroup / 2)];
-        const auto &    b  = bq8_1[ibq8_1];
-        const int       u0 = get_int_from_int8_aligned(b.qs, iqs);
-        const int       u1 = get_int_from_int8_aligned(b.qs, iqs + q4_0_traits::qi);
+        if (ThreadIdxX() == 0) {
+            cute::print("\n - cols=%zu, rows=%zu, scales_per_row=%d", ncols, nrows, (ncols / q4_0_traits::qk));
+        }
+
+        const size_t    iq_index = base_iq_index + (q * WARP_SIZE + local_id);
+        const int       ibq8_1   = (iq_index / q4_0_traits::qi) * (q4_0_traits::qk / QK8_1);
+        // blocks per subgroup  == blocks in a row
+        // const size_t    d_index  = row * (ncols / q4_0_traits::qk) + (iq_index / (blocks_per_subgroup / 2));
+        // const ggml_half d4       = d4s[d_index];
+        const ggml_half d4       = d4s[iq_index / (blocks_per_subgroup / 2)];
+        const auto &    b        = bq8_1[ibq8_1];
+        const int       u0       = get_int_from_int8_aligned(b.qs, iqs);
+        const int       u1       = get_int_from_int8_aligned(b.qs, iqs + q4_0_traits::qi);
+
+        if (ThreadIdxX() % 256 == 0 || ThreadIdxX() % 256 == 16) {
+            cute::print("\n - wid=%d, tid=%d coord {%zu, %zu} -> iq_index=%d, ibq8_1=%d v=%d", workgroup_id, global_id,
+                        load_sg_index, row, iq_index, ibq8_1, v);
+        }
 
         dot += vec_dot_q4_0_q8_1_impl(v, u0, u1, d4, b.ds);
     }
@@ -139,13 +182,14 @@ static __dpct_inline__ float vec_dot_q4_0_q8_1([[maybe_unused]] const void * __r
 }
 
 // NOTE: Will only work with GGML_SYCL_DISABLE_OPT=1 for now
-static void mul_mat_vec_cute_q4_0_q8_1_sycl(const void * vx, const void * vy, float * dst, const size_t ncols,
-                                            const size_t nrows, dpct::queue_ptr stream) {
+static void mul_mat_vec_cute_q4_0_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols,
+                                            const int nrows, dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK4_0 == 0);
     // TODO: What is the purpose of GGML_SYCL_MMV_Y
-    const int        block_num_y    = safe_div(nrows, GGML_SYCL_MMV_Y);
-    constexpr size_t cute_sg_per_wg = 16;
-    constexpr size_t rows_per_sg    = 1;
+    const int        block_num_y       = safe_div(nrows, GGML_SYCL_MMV_Y);
+    constexpr size_t cute_sg_per_wg    = 16;
+    constexpr size_t rows_per_sg       = 1;
+    constexpr size_t pipeline_prefetch = 2;
     GGML_ASSERT(block_num_y % cute_sg_per_wg == 0);
 
     const sycl::range<3> global_size(1, GGML_SYCL_MMV_Y, (block_num_y * WARP_SIZE) / rows_per_sg);
@@ -154,8 +198,8 @@ static void mul_mat_vec_cute_q4_0_q8_1_sycl(const void * vx, const void * vy, fl
     stream->submit([&](sycl::handler & cgh) {
         cgh.parallel_for(sycl::nd_range<3>(global_size, wg_size),
                          [=](sycl::nd_item<3> nd_item) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                             mul_mat_vec_ocl<GGML_TYPE_Q4_0, vec_dot_q4_0_q8_1, rows_per_sg>(vx, vy, dst, ncols, nrows,
-                                                                                             nd_item);
+                             mul_mat_vec_ocl<GGML_TYPE_Q4_0, vec_dot_q4_0_q8_1, pipeline_prefetch, rows_per_sg>(
+                                 vx, vy, dst, ncols, nrows, nd_item);
                          });
     });
 }
