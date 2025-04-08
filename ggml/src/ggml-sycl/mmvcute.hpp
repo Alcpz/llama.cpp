@@ -10,8 +10,10 @@
 
 #include "common.hpp"
 
-typedef float (*vec_dot_cute_sycl_t)(const void * __restrict__ vbq, const ggml_half *   d4s,
-                                     const block_q8_1 * __restrict__ bq8_1, const uint32_t iqs, const uint32_t base_iq_index, const uint32_t ncols, const uint32_t nrows, const uint32_t row);
+typedef float (*vec_dot_cute_sycl_t)(const void * __restrict__ vbq, const ggml_half *    d4s,
+                                     const block_q8_1 * __restrict__ bq8_1, const size_t iqs,
+                                     const size_t base_iq_index, const size_t ncols, const size_t nrows,
+                                     const size_t row);
 
 #ifdef __SYCL_DEVICE_ONLY__
 template <class T, int N> using vector_t = T __attribute__((ext_vector_type(N)));
@@ -20,12 +22,20 @@ template <class T, int N> using vector_t = sycl::marray<T, N>;
 #endif
 
 #ifdef __SYCL_DEVICE_ONLY__
+#    define __global __attribute__((opencl_global))
+
 namespace detail {
-SYCL_EXTERNAL extern "C" vector_t<ushort, 2> __builtin_IB_subgroup_block_read_flat_u8_m1k32v2(
-    long baseoffset, int width_minus_one, int height_minus_one, int pitch_minus_one, vector_t<int, 2> coord);
+// block_load
 SYCL_EXTERNAL extern "C" uint32_t __builtin_IB_subgroup_block_read_flat_u32_m1k16v1(
     long baseoffset, int width_minus_one, int height_minus_one, int pitch_minus_one, vector_t<int, 2> coord);
+
+// prefetch
+SYCL_EXTERNAL void intel_sub_group_2d_block_prefetch_32b_1r16x1c(
+        const __global void* base_address, int width, int height, int pitch,
+        vector_t<int, 2> coord);
 }  // namespace detail
+
+#    undef __global
 #endif
 
 namespace ggml_sycl_reordered {
@@ -38,10 +48,10 @@ template <ggml_type type> struct block_q_t;
 // ncols * nrows * QK4_0 / QR4_0  bytes
 template <> struct block_q_t<GGML_TYPE_Q4_0> {
     struct traits {
-        static constexpr uint32_t qk       = QK4_0;
-        static constexpr uint32_t qi       = QI4_0;
-        static constexpr uint32_t qr       = QR4_0;
-        static constexpr uint32_t vdr_mmvq = 2;
+        static constexpr size_t qk       = QK4_0;
+        static constexpr size_t qi       = QI4_0;
+        static constexpr size_t qr       = QR4_0;
+        static constexpr size_t vdr_mmvq = 2;
     };
 
     // qs and d are contiguous in memory, out-of-bounds qs will access to d values
