@@ -38,29 +38,6 @@ SYCL_EXTERNAL void intel_sub_group_2d_block_prefetch_32b_1r16x1c(
 #    undef __global
 #endif
 
-namespace ggml_sycl_reordered {
-
-template <ggml_type type> struct block_q_t;
-
-// Expected memory layout / sizes
-// ncols * nrows / QK4_0          blocks and scales
-// ncols * nrows * QK4_0          quants
-// ncols * nrows * QK4_0 / QR4_0  bytes
-template <> struct block_q_t<GGML_TYPE_Q4_0> {
-    struct traits {
-        static constexpr size_t qk       = QK4_0;
-        static constexpr size_t qi       = QI4_0;
-        static constexpr size_t qr       = QR4_0;
-        static constexpr size_t vdr_mmvq = 2;
-    };
-
-    // qs and d are contiguous in memory, out-of-bounds qs will access to d values
-    uint8_t *   qs;
-    ggml_half * d;
-};
-
-}  // namespace ggml_sycl_reordered
-
 void ggml_sycl_op_mul_mat_vec_cute(ggml_backend_sycl_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1,
                                    ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,
                                    const char * src1_ddq_i, float * dst_dd_i, int64_t row_low, int64_t row_high,
