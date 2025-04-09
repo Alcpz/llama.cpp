@@ -157,7 +157,7 @@ static __dpct_inline__ float vec_dot_q4_0_q8_1([[maybe_unused]] const void * __r
 #endif
 
         if (ThreadIdxX() == 0) {
-            cute::print("\n - cols=%zu, rows=%zu, scales_per_row=%d", ncols, nrows, (ncols / q4_0_traits::qk));
+            // cute::print("\n - cols=%zu, rows=%zu, scales_per_row=%d", ncols, nrows, (ncols / q4_0_traits::qk));
         }
 
         const size_t    iq_index = base_iq_index + (q * WARP_SIZE + local_id);
@@ -171,8 +171,8 @@ static __dpct_inline__ float vec_dot_q4_0_q8_1([[maybe_unused]] const void * __r
         const int       u1       = get_int_from_int8_aligned(b.qs, iqs + q4_0_traits::qi);
 
         if (ThreadIdxX() % 256 == 0 || ThreadIdxX() % 256 == 16) {
-            cute::print("\n - wid=%d, tid=%d coord {%zu, %zu} -> iq_index=%d, ibq8_1=%d v=%d", workgroup_id, global_id,
-                        load_sg_index, row, iq_index, ibq8_1, v);
+            // cute::print("\n - wid=%d, tid=%d coord {%zu, %zu} -> iq_index=%d, ibq8_1=%d v=%d", workgroup_id, global_id,
+            //             load_sg_index, row, iq_index, ibq8_1, v);
         }
 
         dot += vec_dot_q4_0_q8_1_impl(v, u0, u1, d4, b.ds);

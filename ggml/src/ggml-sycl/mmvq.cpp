@@ -36,8 +36,8 @@ static void mul_mat_vec_q(const void * __restrict__ vx, const void * __restrict_
 
             tmp += vec_dot_q_sycl(&x[ibx], &y[iby], iqs);
 
-            sycl::ext::oneapi::experimental::printf("mul_mat_vec_q: %d %d %d %d %d %d %d %d %.8f\n", blocks_per_row,
-                                                    blocks_per_warp, qi / vdr, i, elem, ibx, iby, iqs, tmp);
+            // sycl::ext::oneapi::experimental::printf("mul_mat_vec_q: %d %d %d %d %d %d %d %d %.8f\n", blocks_per_row,
+            //                                         blocks_per_warp, qi / vdr, i, elem, ibx, iby, iqs, tmp);
         }
     }
 
@@ -428,9 +428,9 @@ static void mul_mat_vec_q4_0_q8_1_sycl(const void * vx, const void * vy, float *
     const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
     const sycl::range<3> block_nums(1, 1, block_num_y);
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
-    printf("mmvq nrows=%d, ncols=%d\n", nrows, ncols);
-    printf("global_size=%zu,%zu,%zu, local_size=%zu,%zu,%zu\n", block_nums[0], block_nums[1], block_dims[2] * block_nums[2],
-                                                                block_dims[0], block_dims[1], block_dims[2]);
+    // printf("mmvq nrows=%d, ncols=%d\n", nrows, ncols);
+    // printf("global_size=%zu,%zu,%zu, local_size=%zu,%zu,%zu\n", block_nums[0], block_nums[1], block_dims[2] * block_nums[2],
+                                                                // block_dims[0], block_dims[1], block_dims[2]);
     {
         stream->submit([&](sycl::handler & cgh) {
             cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
