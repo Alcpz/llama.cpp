@@ -56,9 +56,11 @@ static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restric
     const int  workgroup_id = nd_item.get_group_linear_id();
     const int  sg_id        = sg.get_group_linear_id();
     const int  sg_local_id  = sg.get_local_linear_id();
+    const int  global_id    = sycl::ext::oneapi::this_work_item::get_nd_item<3>().get_global_id(2);
     const int  sg_global_id = workgroup_id * sg_range + sg_id;
 
-    const size_t base_row = rows_per_sg * sg_global_id;
+    const size_t rows_per_workgroup = WARP_SIZE * rows_per_sg;
+    const size_t base_row           = rows_per_sg * sg_global_id;
     if (base_row >= nrows) {
         return;
     }
@@ -74,9 +76,26 @@ static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restric
     const block_type * x = (const block_type *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
     // Prefetch de 0..1
-    for (size_t num_prefetch = 0; num_prefetch < pipeline_prefetch; num_prefetch++) {
-        // TODO
+#ifdef __SYCL_DEVICE_ONLY__
+    size_t width  = ncols / (block_traits::qr);
+    size_t height = nrows;  // INFO: nrows
+    for (size_t i = sg_local_id / block_elements_per_subgroup; i < 2 * blocks_per_subgroup; i += blocks_per_subgroup) {
+        const size_t base_x_coord = (i / blocks_per_subgroup) * (block_traits::vdr_mmvq * WARP_SIZE);
+
+        // if (ThreadIdxX() % 256 == 0 || ThreadIdxX() % 256 == 16) {
+        //     cute::print("\n - wid=%d, tid=%d coord {%zu, %zu}", workgroup_id, global_id, base_x_coord, base_row);
+        // }
+
+
+        // TODO: Generalize with the pipeline prefetch
+        detail::__builtin_IB_subgroup_block_read_prefetch_u32_m1k16v2((long) vx, width - 1, height - 1, width - 1,
+                                                                      { 0, base_row }, detail::CacheControl::kL1C_L3C);
+        detail::__builtin_IB_subgroup_block_read_prefetch_u32_m1k16v2((long) vx, width - 1, height - 1, width - 1,
+                                                                      { WARP_SIZE * block_traits::vdr_mmvq, base_row },
+                                                                      detail::CacheControl::kL1C_L3C);
     }
+#endif
+
     for (size_t row = base_row; row < (base_row + rows_per_sg) && row < nrows; row++) {
         float partial_sum = 0.0f;
 
@@ -85,6 +104,13 @@ static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restric
 
         for (size_t i = sg_local_id / block_elements_per_subgroup; i < blocks_per_row; i += blocks_per_subgroup) {
             // prefetch 2 + i
+
+#ifdef __SYCL_DEVICE_ONLY__
+            const size_t base_x_coord = (i / blocks_per_subgroup) * (block_traits::vdr_mmvq * WARP_SIZE);
+            detail::__builtin_IB_subgroup_block_read_prefetch_u32_m1k16v2((long) vx, width - 1, height - 1, width - 1,
+                                                                          { base_x_coord + pipeline_prefetch * (block_traits::vdr_mmvq * WARP_SIZE), base_row },
+                                                                          detail::CacheControl::kL1C_L3C);
+#endif
             const size_t base_iq_index = (i / blocks_per_subgroup) * (block_traits::vdr_mmvq * WARP_SIZE);
 
             // if (ThreadIdxX() % 256 == 0 || ThreadIdxX() % 256 == 16 || ThreadIdxX() % 256 == 32) {
@@ -156,9 +182,9 @@ static __dpct_inline__ float vec_dot_q4_0_q8_1([[maybe_unused]] const void * __r
             (long) (vbq), width - 1, height - 1, width - 1, coord);
 #endif
 
-        if (ThreadIdxX() == 0) {
-            // cute::print("\n - cols=%zu, rows=%zu, scales_per_row=%d", ncols, nrows, (ncols / q4_0_traits::qk));
-        }
+        // if (ThreadIdxX() == 0) {
+        // cute::print("\n - cols=%zu, rows=%zu, scales_per_row=%d", ncols, nrows, (ncols / q4_0_traits::qk));
+        // }
 
         const size_t    iq_index = base_iq_index + (q * WARP_SIZE + local_id);
         const int       ibq8_1   = (iq_index / q4_0_traits::qi) * (q4_0_traits::qk / QK8_1);
@@ -170,10 +196,10 @@ static __dpct_inline__ float vec_dot_q4_0_q8_1([[maybe_unused]] const void * __r
         const int       u0       = get_int_from_int8_aligned(b.qs, iqs);
         const int       u1       = get_int_from_int8_aligned(b.qs, iqs + q4_0_traits::qi);
 
-        if (ThreadIdxX() % 256 == 0 || ThreadIdxX() % 256 == 16) {
-            // cute::print("\n - wid=%d, tid=%d coord {%zu, %zu} -> iq_index=%d, ibq8_1=%d v=%d", workgroup_id, global_id,
-            //             load_sg_index, row, iq_index, ibq8_1, v);
-        }
+        // if (ThreadIdxX() % 256 == 0 || ThreadIdxX() % 256 == 16) {
+        // cute::print("\n - wid=%d, tid=%d coord {%zu, %zu} -> iq_index=%d, ibq8_1=%d v=%d", workgroup_id, global_id,
+        // load_sg_index, row, iq_index, ibq8_1, v);
+        // }
 
         dot += vec_dot_q4_0_q8_1_impl(v, u0, u1, d4, b.ds);
     }

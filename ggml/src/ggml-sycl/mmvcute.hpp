@@ -30,12 +30,48 @@ SYCL_EXTERNAL extern "C" uint32_t __builtin_IB_subgroup_block_read_flat_u32_m1k1
     long baseoffset, int width_minus_one, int height_minus_one, int pitch_minus_one, vector_t<int, 2> coord);
 
 // prefetch
-SYCL_EXTERNAL void intel_sub_group_2d_block_prefetch_32b_1r16x1c(
-        const __global void* base_address, int width, int height, int pitch,
-        vector_t<int, 2> coord);
+// SYCL_EXTERNAL void intel_sub_group_2d_block_prefetch_32b_1r16x1c(
+//         const __global void* base_address, int width, int height, int pitch,
+//         vector_t<int, 2> coord);
+//
+// SYCL_EXTERNAL void intel_sub_group_2d_block_prefetch_32b_1r16x2c(
+//         const __global void* base_address, int width, int height, int pitch,
+//         vector_t<int, 2> coord);
+#define SYCL_DEVICE_OCL(x) SYCL_EXTERNAL x
+
+using int2 = struct alignas(8) {
+  int x, y;
+};
+
+SYCL_DEVICE_OCL(void intel_sub_group_2d_block_prefetch_32b_1r16x1c(
+    __global void* base_address, int width, int height, int pitch,
+        int2 coord));
+
+SYCL_DEVICE_OCL(void intel_sub_group_2d_block_prefetch_32b_1r16x2c(
+    __global void* base_address, int width, int height, int pitch,
+        int2 coord));
+
+enum class CacheControl {
+    kDefault   = 0,
+    kL1UC_L3UC = 1, // Override to L1 uncached and L3 uncached
+    kL1UC_L3C  = 2, // Override to L1 uncached and L3 cached
+    kL1C_L3UC  = 3, // Override to L1 cached and L3 uncached
+    kL1C_L3C   = 4, // Override to L1 cached and L3 cached
+    kL1S_L3UC  = 5, // Override to L1 streaming load and L3 uncached
+    kL1S_L3C   = 6, // Override to L1 streaming load and L3 cached
+    kL1IAR_L3C = 7, // Override to L1 invalidate-after-read, and L3 cached
+};
+
+SYCL_EXTERNAL extern "C" void __builtin_IB_subgroup_block_read_prefetch_u32_m1k16v1(
+    long baseoffset, int width_minus_one, int height_minus_one,
+    int pitch_minus_one, vector_t<int, 2> coord, enum CacheControl cache_control);
+
+SYCL_EXTERNAL extern "C" void __builtin_IB_subgroup_block_read_prefetch_u32_m1k16v2(
+    long baseoffset, int width_minus_one, int height_minus_one,
+    int pitch_minus_one, vector_t<int, 2> coord, enum CacheControl cache_control);
 }  // namespace detail
 
-#    undef __global
+
 #endif
 
 namespace ggml_sycl_reordered {
