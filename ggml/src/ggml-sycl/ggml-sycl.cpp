@@ -3175,15 +3175,15 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
     // #endif
 
     // if (use_mul_mat_vec_cute) {
-    std::cout << std::endl;
-    printf("src0: %8zu %8zu %8zu %8zu\n", src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3]);
-    printf("      %8zu %8zu %8zu %8zu\n", src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3]);
-    printf("src1: %8zu %8zu %8zu %8zu\n", src1->ne[0], src1->ne[1], src1->ne[2], src1->ne[3]);
-    printf("      %8zu %8zu %8zu %8zu\n", src1->nb[0], src1->nb[1], src1->nb[2], src1->nb[3]);
-    printf("src0 is contiguous %d, transposed %d, type = %s, name = %s\n", ggml_is_contiguous(src0),
-           ggml_is_transposed(src0), ggml_type_name(src0->type), src0->name);
-    printf("src1 is contiguous %d, transposed %d, type = %s, name = %s\n", ggml_is_contiguous(src1),
-           ggml_is_transposed(src1), ggml_type_name(src1->type), src1->name);
+    // std::cout << std::endl;
+    // printf("src0: %8zu %8zu %8zu %8zu\n", src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3]);
+    // printf("      %8zu %8zu %8zu %8zu\n", src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3]);
+    // printf("src1: %8zu %8zu %8zu %8zu\n", src1->ne[0], src1->ne[1], src1->ne[2], src1->ne[3]);
+    // printf("      %8zu %8zu %8zu %8zu\n", src1->nb[0], src1->nb[1], src1->nb[2], src1->nb[3]);
+    // printf("src0 is contiguous %d, transposed %d, type = %s, name = %s\n", ggml_is_contiguous(src0),
+    //        ggml_is_transposed(src0), ggml_type_name(src0->type), src0->name);
+    // printf("src1 is contiguous %d, transposed %d, type = %s, name = %s\n", ggml_is_contiguous(src1),
+    //        ggml_is_transposed(src1), ggml_type_name(src1->type), src1->name);
     // }
 
     if (!split && src0->type == GGML_TYPE_F16 && ggml_is_permuted(src0) && ggml_is_permuted(src1) && src1->ne[1] == 1) {
@@ -3211,12 +3211,12 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
         ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_cute, convert_src1_to_q8_1);
 #endif
     } else if (use_dequantize_mul_mat_vec) {
-        std::cout << "ddmv" << std::endl;
+        // std::cout << "ddmv" << std::endl;
         constexpr bool convert_src1_to_q8_1 = false;
         opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::DMMV);
         ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_dequantize_mul_mat_vec, convert_src1_to_q8_1);
     } else if (use_mul_mat_vec_q) {
-        std::cout << "mul_mat_vec_q" << std::endl;
+        // std::cout << "mul_mat_vec_q" << std::endl;
         constexpr bool convert_src1_to_q8_1 = true;
         opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::MMVQ);
         ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_q, convert_src1_to_q8_1);
