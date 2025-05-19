@@ -2775,7 +2775,7 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
 #if GGML_SYCL_CUTLASS_ENABLE
     bool use_mul_mat_vec_cute = ggml_sycl_supports_mmvcute(src0->type) && src1->type == GGML_TYPE_F32 &&
                                 dst->type == GGML_TYPE_F32 && src0->ne[2] == 1 && src0->ne[3] == 1 &&
-                                src1->ne[2] == 1 && src1->ne[3] == 1;
+                                src1->ne[1] == 1 && src1->ne[2] == 1 && src1->ne[3] == 1;
 #endif
 
     // mmvq path is faster in the CUDA backend.
