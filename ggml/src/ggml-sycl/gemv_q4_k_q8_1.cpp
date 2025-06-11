@@ -17,16 +17,16 @@
  *     Expected GEMV Layout: nrows x ncols : ncols x 1;
  **************************************************************************/
 
-#include "builtins.hpp"
-#include "cacheopts.hpp"
-#include "dpct/helper.hpp"
-#include "quants.hpp"
-
 #include <sys/types.h>
 
 #include <cstdint>
 #include <sycl/aliases.hpp>
 #include <sycl/sycl.hpp>
+
+#include "builtins.hpp"
+#include "cacheopts.hpp"
+#include "dpct/helper.hpp"
+#include "quants.hpp"
 
 constexpr size_t rows_per_sg = 16;
 
@@ -70,7 +70,7 @@ static __attribute__((always_inline)) inline uint16 get_quant_tile(const void * 
 static __attribute__((always_inline)) inline void prefetch_q8_tile(const void * weights, size_t ncols, size_t nrows,
                                                                    uint2 coord, LSC_LDCC cache_policy) {
 #ifdef __SYCL_DEVICE_ONLY__
-    __builtin_ib_subgroup_block_read_prefetch_u32_m1k16v1((intptr_t) weights, ncols - 1, nrows - 1, ncols - 1, coord,
+    __builtin_IB_subgroup_block_read_prefetch_u32_m1k16v1((intptr_t) weights, ncols - 1, nrows - 1, ncols - 1, coord,
                                                           cache_policy);
 #else
     (void) weights;
@@ -87,7 +87,7 @@ static __attribute__((always_inline)) inline uint32_t get_q8_tile(const void * w
 #ifdef __SYCL_DEVICE_ONLY__
     auto value =
         __builtin_IB_subgroup_block_read_flat_u32_m1k16v1((intptr_t) weights, ncols - 1, nrows - 1, ncols - 1, coord);
-    return values;
+    return value;
 #else
     (void) weights;
     (void) nrows;
@@ -226,10 +226,13 @@ __attribute__((always_inline)) inline static void q4_K_q8_1_tiled_gemv(const voi
 
         auto q4_coord  = uint2{ tile_col_begin, tile_row_begin };
         auto q4_k_tile = get_quant_tile<block_q_t>(weights, ncols, nrows, q4_coord);
+        auto scales    = block_q_t::get_d_offset(nrows, ncols, const int block_index);
+        auto q4m       = scales.;
+        auto scs       = ;
 
         uint2 q8_qs = {
-            get_quant_tile<block_q_t>(weights, ncols, nrows, uint2{ get_qs_index(tile_col_begin, false), 0 }),
-            get_quant_tile<block_q_t>(weights, ncols, nrows, uint2{ get_qs_index(tile_col_begin, true), 0 })
+            get_q8_tile(weights, ncols, nrows, uint2{ get_qs_index(tile_col_begin, false), 0 }),
+            get_q8_tile(weights, ncols, nrows, uint2{ get_qs_index(tile_col_begin, true), 0 })
         };
 
         // TODO: Load scales (Block load may not be feasible as scales are per 8 quants
@@ -243,7 +246,7 @@ __attribute__((always_inline)) inline static void q4_K_q8_1_tiled_gemv(const voi
             // whatever happened to two's complement ? I suppose that's how 4 bit negative integeters
             // are represented as well.
 
-            partial_sums[i] = vec_dot_q4_K_q8_1(q4_k_tile[i], dm, scs, &q8_qs, &q8_dms);
+            // partial_sums[i] = vec_dot_q4_K_q8_1(q4_k_tile[i], dm, scs, &q8_qs, &q8_dms);
         }
     }
 
