@@ -116,7 +116,7 @@ if (GGML_SYCL_TARGET STREQUAL "INTEL")
     endif()
 
     target_compile_options(ggml-sycl PRIVATE "-DCUTLASS_ENABLE_SYCL" "-DSYCL_INTEL_TARGET" "-fsycl-targets=intel_gpu_bmg_g21" "-Xspirv-translator" "-spirv-ext=+SPV_INTEL_split_barrier")
-    target_link_options(ggml-sycl PRIVATE "-DCUTLASS_ENABLE_SYCL" "-DSYCL_INTEL_TARGET" "-fsycl-targets=" "-Xspirv-translator" "-spirv-ext=+SPV_INTEL_split_barrier")
+    target_link_options(ggml-sycl PRIVATE "-DCUTLASS_ENABLE_SYCL" "-DSYCL_INTEL_TARGET" "-fsycl-targets=intel_gpu_bmg_g21" "-Xspirv-translator" "-spirv-ext=+SPV_INTEL_split_barrier")
     target_include_directories(ggml-sycl PRIVATE "/home/acabrera/sources/cutlass-fork/include")
 
     find_package(MKL REQUIRED)

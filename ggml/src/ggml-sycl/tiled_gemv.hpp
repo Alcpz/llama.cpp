@@ -25,5 +25,5 @@
 void q4_K_q8_1_tiled_gemv(const void * weights, const void * input, float * dst, int nrows, int ncols,
                           const sycl::nd_item<1> & it);
 
-void mul_mat_q4_K_q8_1_tiled_gemv(const void * vx, const void * vy, float * dst, int ncols, int nrows,
+void mul_mat_q4_K_q8_1_tiled_gemv(const void * vx, const void * vy, float * dst, size_t ncols, size_t nrows,
                                   dpct::queue_ptr stream);

@@ -28,7 +28,7 @@
 #include "dpct/helper.hpp"
 #include "quants.hpp"
 
-constexpr size_t rows_per_sg = 16;
+constexpr size_t tile_height = 16;
 
 // INFO: u32 k16 loads a whole superblock in two loads
 template <typename block_q_t>
@@ -167,7 +167,7 @@ static inline float vec_dot_q4_K_q8_1(const void * __restrict__ vbq, const int i
 // Actual width of the data is ncols / qr -> for each block 512 / 2 = 256 bytes
 // Current block load (m16, k16, v1) reads 16 rows, and from each row loads 16 ints -> 16 * 16 * 4 =
 // 16 * 64 = 4096 bytes TODO: ensure rows * cols > 4096
-template <size_t rows_per_sg, size_t prefetch_pipeline>
+template <size_t tile_height, size_t prefetch_pipeline>
 __attribute__((always_inline)) inline static void q4_K_q8_1_tiled_gemv(const void * weights, const void * input,
                                                                        float * dst, const size_t ncols,
                                                                        const size_t             nrows,
@@ -186,7 +186,7 @@ __attribute__((always_inline)) inline static void q4_K_q8_1_tiled_gemv(const voi
     // Since local_range = WARP_RANGE
     auto         subgroup_id    = it.get_local_id(0);
     auto         wi_id          = it.get_local_linear_id();  // subgroup local id = workgroup local id
-    const size_t tile_row_begin = rows_per_sg * subgroup_id;
+    const size_t tile_row_begin = tile_height * subgroup_id;
     const int    blocks_per_row = ncols / block_q_t::traits::qk;
 
     // TODO: quantization of q8_1 inside the kernel
@@ -215,7 +215,7 @@ __attribute__((always_inline)) inline static void q4_K_q8_1_tiled_gemv(const voi
         prefetch_quant_tile<block_q_t>(weights, ncols, 1, q8_prefetch_coord, LSC_LDCC_L1C_L3C);
     }
 
-    sycl::vec<float, rows_per_sg> partial_sums{ 0 };
+    sycl::vec<float, tile_height> partial_sums{ 0 };
     // TODO: should we read via L1 and not L3 ? This way we keep the L1 for the current inputs
     // INFO: Current blockloads grabs entire superblock every 2 iterations (reorder chances)
     for (size_t tile_col_begin = 0; tile_col_begin < ncols; tile_col_begin += coord_stride) {
@@ -226,9 +226,9 @@ __attribute__((always_inline)) inline static void q4_K_q8_1_tiled_gemv(const voi
 
         auto q4_coord  = uint2{ tile_col_begin, tile_row_begin };
         auto q4_k_tile = get_quant_tile<block_q_t>(weights, ncols, nrows, q4_coord);
-        auto scales    = block_q_t::get_d_offset(nrows, ncols, const int block_index);
-        auto q4m       = scales.;
-        auto scs       = ;
+        // auto scales    = block_q_t::get_d_offset(nrows, ncols, block_index);
+        // auto q4m       = ;
+        // auto scs       = ;
 
         uint2 q8_qs = {
             get_q8_tile(weights, ncols, nrows, uint2{ get_qs_index(tile_col_begin, false), 0 }),
@@ -241,7 +241,7 @@ __attribute__((always_inline)) inline static void q4_K_q8_1_tiled_gemv(const voi
         // TODO: If I am in the last K tile, prefetch my Q4_K scales
         //
 #pragma unroll(16)
-        for (uint8_t i = 0; i < rows_per_sg; i++) {
+        for (uint8_t i = 0; i < tile_height; i++) {
             // TODO: check, are we sure that we can simply zero-extend 4 bit integers to 8 bit integers ?
             // whatever happened to two's complement ? I suppose that's how 4 bit negative integeters
             // are represented as well.
@@ -273,18 +273,19 @@ __attribute__((always_inline)) inline static void q4_K_q8_1_tiled_gemv(const voi
 void mul_mat_q4_K_q8_1_tiled_gemv(const void * vx, const void * vy, float * dst, const size_t ncols, const size_t nrows,
                                   dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK_K == 0);
-    GGML_ASSERT(nrows % rows_per_sg == 0);
+    GGML_ASSERT(nrows % tile_height == 0);
 
-    constexpr size_t rows_per_sg       = 16;
+    constexpr size_t tile_height       = 16;
     constexpr size_t prefetch_pipeline = 2;
 
-    const sycl::range<1> global_size(nrows / rows_per_sg);
-    const sycl::range<1> wg_size(rows_per_sg);
+    const sycl::range<1> global_size(nrows);
+    const sycl::range<1> wg_size(tile_height);
+    std::cout << "Global_range: " << global_size[0] << " Local_range: " << wg_size[0] << std::endl;
 
     stream->submit([&](sycl::handler & cgh) {
         cgh.parallel_for(sycl::nd_range<1>(global_size, wg_size),
                          [=](sycl::nd_item<1> nd_item) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                             q4_K_q8_1_tiled_gemv<rows_per_sg, prefetch_pipeline>(vx, vy, dst, ncols, nrows, nd_item);
+                             q4_K_q8_1_tiled_gemv<tile_height, prefetch_pipeline>(vx, vy, dst, ncols, nrows, nd_item);
                          });
     });
 }
