@@ -2980,7 +2980,7 @@ enum class mul_mat_algo {
     CUTE         = 3,
 };
 
-#define GGML_SYCL_CUTLASS_ENABLE 0
+#define GGML_SYCL_CUTLASS_ENABLE 1
 #if GGML_SYCL_CUTLASS_ENABLE
 inline bool ggml_sycl_supports_mmvcute(enum ggml_type type) {
     switch (type) {
