@@ -86,9 +86,6 @@ static void mul_mat_vec_q(const void * __restrict__ vx, const void * __restrict_
                                           (qi / vdr));  // x block quant index when casting the quants to int
 
             tmp += vec_dot_q_sycl(&x[ibx], &y[iby], iqs);
-
-            // sycl::ext::oneapi::experimental::printf("mul_mat_vec_q: %d %d %d %d %d %d %d %d %.8f\n", blocks_per_row,
-            //                                         blocks_per_warp, qi / vdr, i, elem, ibx, iby, iqs, tmp);
         }
     }
 
@@ -104,32 +101,38 @@ static void mul_mat_vec_q(const void * __restrict__ vx, const void * __restrict_
 }
 
 template <int qk, int qi, typename block_q_t, int vdr>
-static void mul_mat_vec_q_iq2_xxs_q8_1(const void * __restrict__ vx, const void * __restrict__ vy,
-                                       float * __restrict__ dst, const int ncols, const int nrows,
-                                       const sycl::nd_item<3> & item_ct1) {
-    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) + item_ct1.get_local_id(1);
+static void mul_mat_vec_q_iq2_xxs_q8_1(const void *__restrict__ vx,
+                                       const void *__restrict__ vy,
+                                       float *__restrict__ dst, const int ncols,
+                                       const int nrows,
+                                       const sycl::nd_item<3> &item_ct1) {
+    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) +
+                    item_ct1.get_local_id(1);
 
     if (row >= nrows) {
         return;
     }
 
-    const int blocks_per_row  = ncols / qk;
+    const int blocks_per_row = ncols / qk;
     const int blocks_per_warp = vdr * WARP_SIZE / qi;
-    assert(blocks_per_warp > 0);
+    assert(blocks_per_warp>0);
 
-    // partial sum for each thread
+// partial sum for each thread
     float tmp = 0.0f;
 
-    const block_q_t *  x = (const block_q_t *) vx;
+    const block_q_t  * x = (const block_q_t  *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
-    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row; i += blocks_per_warp) {
-        const int ibx = row * blocks_per_row + i;  // x block index
+    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row;
+         i += blocks_per_warp) {
+        const int ibx = row*blocks_per_row + i; // x block index
 
-        const int iby = i * (qk / QK8_1);          // y block index that aligns with ibx
+        const int iby = i * (qk/QK8_1); // y block index that aligns with ibx
 
         const int iqs =
-            vdr * (item_ct1.get_local_id(2) % (qi / vdr));  // x block quant index when casting the quants to int
+            vdr *
+            (item_ct1.get_local_id(2) %
+             (qi / vdr)); // x block quant index when casting the quants to int
 
         tmp += vec_dot_iq2_xxs_q8_1(&x[ibx], &y[iby], iqs, iq2xxs_grid, ksigns_iq2xs, kmask_iq2xs);
     }
@@ -137,7 +140,8 @@ static void mul_mat_vec_q_iq2_xxs_q8_1(const void * __restrict__ vx, const void 
     // sum up partial sums and write back result
 #pragma unroll
     for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
-        tmp += dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
+        tmp +=
+            dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
     }
 
     if (item_ct1.get_local_id(2) == 0) {
@@ -146,31 +150,37 @@ static void mul_mat_vec_q_iq2_xxs_q8_1(const void * __restrict__ vx, const void 
 }
 
 template <int qk, int qi, typename block_q_t, int vdr>
-static void mul_mat_vec_q_iq2_xs_q8_1(const void * __restrict__ vx, const void * __restrict__ vy,
-                                      float * __restrict__ dst, const int ncols, const int nrows,
-                                      const sycl::nd_item<3> & item_ct1) {
-    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) + item_ct1.get_local_id(1);
+static void mul_mat_vec_q_iq2_xs_q8_1(const void *__restrict__ vx,
+                                      const void *__restrict__ vy,
+                                      float *__restrict__ dst, const int ncols,
+                                      const int nrows,
+                                      const sycl::nd_item<3> &item_ct1) {
+    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) +
+                    item_ct1.get_local_id(1);
 
     if (row >= nrows) {
         return;
     }
 
-    const int blocks_per_row  = ncols / qk;
+    const int blocks_per_row = ncols / qk;
     const int blocks_per_warp = vdr * WARP_SIZE / qi;
-    assert(blocks_per_warp > 0);
-    // partial sum for each thread
+    assert(blocks_per_warp>0);
+// partial sum for each thread
     float tmp = 0.0f;
 
-    const block_q_t *  x = (const block_q_t *) vx;
+    const block_q_t  * x = (const block_q_t  *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
-    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row; i += blocks_per_warp) {
-        const int ibx = row * blocks_per_row + i;  // x block index
+    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row;
+         i += blocks_per_warp) {
+        const int ibx = row*blocks_per_row + i; // x block index
 
-        const int iby = i * (qk / QK8_1);          // y block index that aligns with ibx
+        const int iby = i * (qk/QK8_1); // y block index that aligns with ibx
 
         const int iqs =
-            vdr * (item_ct1.get_local_id(2) % (qi / vdr));  // x block quant index when casting the quants to int
+            vdr *
+            (item_ct1.get_local_id(2) %
+             (qi / vdr)); // x block quant index when casting the quants to int
 
         tmp += vec_dot_iq2_xs_q8_1(&x[ibx], &y[iby], iqs, iq2xs_grid, ksigns64);
     }
@@ -178,7 +188,8 @@ static void mul_mat_vec_q_iq2_xs_q8_1(const void * __restrict__ vx, const void *
     // sum up partial sums and write back result
 #pragma unroll
     for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
-        tmp += dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
+        tmp +=
+            dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
     }
 
     if (item_ct1.get_local_id(2) == 0) {
@@ -187,31 +198,37 @@ static void mul_mat_vec_q_iq2_xs_q8_1(const void * __restrict__ vx, const void *
 }
 
 template <int qk, int qi, typename block_q_t, int vdr>
-static void mul_mat_vec_q_iq2_s_q8_1(const void * __restrict__ vx, const void * __restrict__ vy,
-                                     float * __restrict__ dst, const int ncols, const int nrows,
-                                     const sycl::nd_item<3> & item_ct1) {
-    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) + item_ct1.get_local_id(1);
+static void mul_mat_vec_q_iq2_s_q8_1(const void *__restrict__ vx,
+                                     const void *__restrict__ vy,
+                                     float *__restrict__ dst, const int ncols,
+                                     const int nrows,
+                                     const sycl::nd_item<3> &item_ct1) {
+    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) +
+                    item_ct1.get_local_id(1);
 
     if (row >= nrows) {
         return;
     }
 
-    const int blocks_per_row  = ncols / qk;
+    const int blocks_per_row = ncols / qk;
     const int blocks_per_warp = vdr * WARP_SIZE / qi;
-    assert(blocks_per_warp > 0);
-    // partial sum for each thread
+    assert(blocks_per_warp>0);
+// partial sum for each thread
     float tmp = 0.0f;
 
-    const block_q_t *  x = (const block_q_t *) vx;
+    const block_q_t  * x = (const block_q_t  *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
-    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row; i += blocks_per_warp) {
-        const int ibx = row * blocks_per_row + i;  // x block index
+    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row;
+         i += blocks_per_warp) {
+        const int ibx = row*blocks_per_row + i; // x block index
 
-        const int iby = i * (qk / QK8_1);          // y block index that aligns with ibx
+        const int iby = i * (qk/QK8_1); // y block index that aligns with ibx
 
         const int iqs =
-            vdr * (item_ct1.get_local_id(2) % (qi / vdr));  // x block quant index when casting the quants to int
+            vdr *
+            (item_ct1.get_local_id(2) %
+             (qi / vdr)); // x block quant index when casting the quants to int
 
         tmp += vec_dot_iq2_s_q8_1(&x[ibx], &y[iby], iqs);
     }
@@ -219,7 +236,8 @@ static void mul_mat_vec_q_iq2_s_q8_1(const void * __restrict__ vx, const void * 
     // sum up partial sums and write back result
 #pragma unroll
     for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
-        tmp += dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
+        tmp +=
+            dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
     }
 
     if (item_ct1.get_local_id(2) == 0) {
@@ -228,31 +246,37 @@ static void mul_mat_vec_q_iq2_s_q8_1(const void * __restrict__ vx, const void * 
 }
 
 template <int qk, int qi, typename block_q_t, int vdr>
-static void mul_mat_vec_q_iq3_xxs_q8_1(const void * __restrict__ vx, const void * __restrict__ vy,
-                                       float * __restrict__ dst, const int ncols, const int nrows,
-                                       const sycl::nd_item<3> & item_ct1) {
-    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) + item_ct1.get_local_id(1);
+static void mul_mat_vec_q_iq3_xxs_q8_1(const void *__restrict__ vx,
+                                       const void *__restrict__ vy,
+                                       float *__restrict__ dst, const int ncols,
+                                       const int nrows,
+                                       const sycl::nd_item<3> &item_ct1) {
+    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) +
+                    item_ct1.get_local_id(1);
 
     if (row >= nrows) {
         return;
     }
 
-    const int blocks_per_row  = ncols / qk;
+    const int blocks_per_row = ncols / qk;
     const int blocks_per_warp = vdr * WARP_SIZE / qi;
-    assert(blocks_per_warp > 0);
-    // partial sum for each thread
+    assert(blocks_per_warp>0);
+// partial sum for each thread
     float tmp = 0.0f;
 
-    const block_q_t *  x = (const block_q_t *) vx;
+    const block_q_t  * x = (const block_q_t  *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
-    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row; i += blocks_per_warp) {
-        const int ibx = row * blocks_per_row + i;  // x block index
+    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row;
+         i += blocks_per_warp) {
+        const int ibx = row*blocks_per_row + i; // x block index
 
-        const int iby = i * (qk / QK8_1);          // y block index that aligns with ibx
+        const int iby = i * (qk/QK8_1); // y block index that aligns with ibx
 
         const int iqs =
-            vdr * (item_ct1.get_local_id(2) % (qi / vdr));  // x block quant index when casting the quants to int
+            vdr *
+            (item_ct1.get_local_id(2) %
+             (qi / vdr)); // x block quant index when casting the quants to int
 
         tmp += vec_dot_iq3_xxs_q8_1(&x[ibx], &y[iby], iqs, iq3xxs_grid, ksigns64);
     }
@@ -260,7 +284,8 @@ static void mul_mat_vec_q_iq3_xxs_q8_1(const void * __restrict__ vx, const void 
     // sum up partial sums and write back result
 #pragma unroll
     for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
-        tmp += dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
+        tmp +=
+            dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
     }
 
     if (item_ct1.get_local_id(2) == 0) {
@@ -269,31 +294,37 @@ static void mul_mat_vec_q_iq3_xxs_q8_1(const void * __restrict__ vx, const void 
 }
 
 template <int qk, int qi, typename block_q_t, int vdr>
-static void mul_mat_vec_q_iq3_s_q8_1(const void * __restrict__ vx, const void * __restrict__ vy,
-                                     float * __restrict__ dst, const int ncols, const int nrows,
-                                     const sycl::nd_item<3> & item_ct1) {
-    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) + item_ct1.get_local_id(1);
+static void mul_mat_vec_q_iq3_s_q8_1(const void *__restrict__ vx,
+                                     const void *__restrict__ vy,
+                                     float *__restrict__ dst, const int ncols,
+                                     const int nrows,
+                                     const sycl::nd_item<3> &item_ct1) {
+    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) +
+                    item_ct1.get_local_id(1);
 
     if (row >= nrows) {
         return;
     }
 
-    const int blocks_per_row  = ncols / qk;
+    const int blocks_per_row = ncols / qk;
     const int blocks_per_warp = vdr * WARP_SIZE / qi;
-    assert(blocks_per_warp > 0);
-    // partial sum for each thread
+    assert(blocks_per_warp>0);
+// partial sum for each thread
     float tmp = 0.0f;
 
-    const block_q_t *  x = (const block_q_t *) vx;
+    const block_q_t  * x = (const block_q_t  *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
-    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row; i += blocks_per_warp) {
-        const int ibx = row * blocks_per_row + i;  // x block index
+    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row;
+         i += blocks_per_warp) {
+        const int ibx = row*blocks_per_row + i; // x block index
 
-        const int iby = i * (qk / QK8_1);          // y block index that aligns with ibx
+        const int iby = i * (qk/QK8_1); // y block index that aligns with ibx
 
         const int iqs =
-            vdr * (item_ct1.get_local_id(2) % (qi / vdr));  // x block quant index when casting the quants to int
+            vdr *
+            (item_ct1.get_local_id(2) %
+             (qi / vdr)); // x block quant index when casting the quants to int
 
         tmp += vec_dot_iq3_s_q8_1(&x[ibx], &y[iby], iqs, iq3s_grid);
     }
@@ -301,7 +332,8 @@ static void mul_mat_vec_q_iq3_s_q8_1(const void * __restrict__ vx, const void * 
     // sum up partial sums and write back result
 #pragma unroll
     for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
-        tmp += dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
+        tmp +=
+            dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
     }
 
     if (item_ct1.get_local_id(2) == 0) {
@@ -310,31 +342,37 @@ static void mul_mat_vec_q_iq3_s_q8_1(const void * __restrict__ vx, const void * 
 }
 
 template <int qk, int qi, typename block_q_t, int vdr>
-static void mul_mat_vec_q_iq1_s_q8_1(const void * __restrict__ vx, const void * __restrict__ vy,
-                                     float * __restrict__ dst, const int ncols, const int nrows,
-                                     const sycl::nd_item<3> & item_ct1) {
-    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) + item_ct1.get_local_id(1);
+static void mul_mat_vec_q_iq1_s_q8_1(const void *__restrict__ vx,
+                                     const void *__restrict__ vy,
+                                     float *__restrict__ dst, const int ncols,
+                                     const int nrows,
+                                     const sycl::nd_item<3> &item_ct1) {
+    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) +
+                    item_ct1.get_local_id(1);
 
     if (row >= nrows) {
         return;
     }
 
-    const int blocks_per_row  = ncols / qk;
+    const int blocks_per_row = ncols / qk;
     const int blocks_per_warp = vdr * WARP_SIZE / qi;
-    assert(blocks_per_warp > 0);
-    // partial sum for each thread
+    assert(blocks_per_warp>0);
+// partial sum for each thread
     float tmp = 0.0f;
 
-    const block_q_t *  x = (const block_q_t *) vx;
+    const block_q_t  * x = (const block_q_t  *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
-    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row; i += blocks_per_warp) {
-        const int ibx = row * blocks_per_row + i;  // x block index
+    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row;
+         i += blocks_per_warp) {
+        const int ibx = row*blocks_per_row + i; // x block index
 
-        const int iby = i * (qk / QK8_1);          // y block index that aligns with ibx
+        const int iby = i * (qk/QK8_1); // y block index that aligns with ibx
 
         const int iqs =
-            vdr * (item_ct1.get_local_id(2) % (qi / vdr));  // x block quant index when casting the quants to int
+            vdr *
+            (item_ct1.get_local_id(2) %
+             (qi / vdr)); // x block quant index when casting the quants to int
 
         tmp += vec_dot_iq1_s_q8_1(&x[ibx], &y[iby], iqs, iq1s_grid_gpu);
     }
@@ -342,7 +380,8 @@ static void mul_mat_vec_q_iq1_s_q8_1(const void * __restrict__ vx, const void * 
     // sum up partial sums and write back result
 #pragma unroll
     for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
-        tmp += dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
+        tmp +=
+            dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
     }
 
     if (item_ct1.get_local_id(2) == 0) {
@@ -351,31 +390,37 @@ static void mul_mat_vec_q_iq1_s_q8_1(const void * __restrict__ vx, const void * 
 }
 
 template <int qk, int qi, typename block_q_t, int vdr>
-static void mul_mat_vec_q_iq1_m_q8_1(const void * __restrict__ vx, const void * __restrict__ vy,
-                                     float * __restrict__ dst, const int ncols, const int nrows,
-                                     const sycl::nd_item<3> & item_ct1) {
-    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) + item_ct1.get_local_id(1);
+static void mul_mat_vec_q_iq1_m_q8_1(const void *__restrict__ vx,
+                                     const void *__restrict__ vy,
+                                     float *__restrict__ dst, const int ncols,
+                                     const int nrows,
+                                     const sycl::nd_item<3> &item_ct1) {
+    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) +
+                    item_ct1.get_local_id(1);
 
     if (row >= nrows) {
         return;
     }
 
-    const int blocks_per_row  = ncols / qk;
+    const int blocks_per_row = ncols / qk;
     const int blocks_per_warp = vdr * WARP_SIZE / qi;
-    assert(blocks_per_warp > 0);
-    // partial sum for each thread
+    assert(blocks_per_warp>0);
+// partial sum for each thread
     float tmp = 0.0f;
 
-    const block_q_t *  x = (const block_q_t *) vx;
+    const block_q_t  * x = (const block_q_t  *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
-    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row; i += blocks_per_warp) {
-        const int ibx = row * blocks_per_row + i;  // x block index
+    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row;
+         i += blocks_per_warp) {
+        const int ibx = row*blocks_per_row + i; // x block index
 
-        const int iby = i * (qk / QK8_1);          // y block index that aligns with ibx
+        const int iby = i * (qk/QK8_1); // y block index that aligns with ibx
 
         const int iqs =
-            vdr * (item_ct1.get_local_id(2) % (qi / vdr));  // x block quant index when casting the quants to int
+            vdr *
+            (item_ct1.get_local_id(2) %
+             (qi / vdr)); // x block quant index when casting the quants to int
 
         tmp += vec_dot_iq1_m_q8_1(&x[ibx], &y[iby], iqs);
     }
@@ -383,7 +428,8 @@ static void mul_mat_vec_q_iq1_m_q8_1(const void * __restrict__ vx, const void * 
     // sum up partial sums and write back result
 #pragma unroll
     for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
-        tmp += dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
+        tmp +=
+            dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
     }
 
     if (item_ct1.get_local_id(2) == 0) {
@@ -392,31 +438,37 @@ static void mul_mat_vec_q_iq1_m_q8_1(const void * __restrict__ vx, const void * 
 }
 
 template <int qk, int qi, typename block_q_t, int vdr>
-static void mul_mat_vec_q_iq4_nl_q8_1(const void * __restrict__ vx, const void * __restrict__ vy,
-                                      float * __restrict__ dst, const int ncols, const int nrows,
-                                      const sycl::nd_item<3> & item_ct1) {
-    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) + item_ct1.get_local_id(1);
+static void mul_mat_vec_q_iq4_nl_q8_1(const void *__restrict__ vx,
+                                      const void *__restrict__ vy,
+                                      float *__restrict__ dst, const int ncols,
+                                      const int nrows,
+                                      const sycl::nd_item<3> &item_ct1) {
+    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) +
+                    item_ct1.get_local_id(1);
 
     if (row >= nrows) {
         return;
     }
 
-    const int blocks_per_row  = ncols / qk;
+    const int blocks_per_row = ncols / qk;
     const int blocks_per_warp = vdr * WARP_SIZE / qi;
-    assert(blocks_per_warp > 0);
-    // partial sum for each thread
+    assert(blocks_per_warp>0);
+// partial sum for each thread
     float tmp = 0.0f;
 
-    const block_q_t *  x = (const block_q_t *) vx;
+    const block_q_t  * x = (const block_q_t  *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
-    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row; i += blocks_per_warp) {
-        const int ibx = row * blocks_per_row + i;  // x block index
+    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row;
+         i += blocks_per_warp) {
+        const int ibx = row*blocks_per_row + i; // x block index
 
-        const int iby = i * (qk / QK8_1);          // y block index that aligns with ibx
+        const int iby = i * (qk/QK8_1); // y block index that aligns with ibx
 
         const int iqs =
-            vdr * (item_ct1.get_local_id(2) % (qi / vdr));  // x block quant index when casting the quants to int
+            vdr *
+            (item_ct1.get_local_id(2) %
+             (qi / vdr)); // x block quant index when casting the quants to int
 
         tmp += vec_dot_iq4_nl_q8_1(&x[ibx], &y[iby], iqs);
     }
@@ -424,7 +476,8 @@ static void mul_mat_vec_q_iq4_nl_q8_1(const void * __restrict__ vx, const void *
     // sum up partial sums and write back result
 #pragma unroll
     for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
-        tmp += dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
+        tmp +=
+            dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
     }
 
     if (item_ct1.get_local_id(2) == 0) {
@@ -432,32 +485,39 @@ static void mul_mat_vec_q_iq4_nl_q8_1(const void * __restrict__ vx, const void *
     }
 }
 
+
 template <int qk, int qi, typename block_q_t, int vdr>
-static void mul_mat_vec_q_iq4_xs_q8_1(const void * __restrict__ vx, const void * __restrict__ vy,
-                                      float * __restrict__ dst, const int ncols, const int nrows,
-                                      const sycl::nd_item<3> & item_ct1) {
-    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) + item_ct1.get_local_id(1);
+static void mul_mat_vec_q_iq4_xs_q8_1(const void *__restrict__ vx,
+                                      const void *__restrict__ vy,
+                                      float *__restrict__ dst, const int ncols,
+                                      const int nrows,
+                                      const sycl::nd_item<3> &item_ct1) {
+    const int row = item_ct1.get_group(2) * item_ct1.get_local_range(1) +
+                    item_ct1.get_local_id(1);
 
     if (row >= nrows) {
         return;
     }
 
-    const int blocks_per_row  = ncols / qk;
+    const int blocks_per_row = ncols / qk;
     const int blocks_per_warp = vdr * WARP_SIZE / qi;
-    assert(blocks_per_warp > 0);
-    // partial sum for each thread
+    assert(blocks_per_warp>0);
+// partial sum for each thread
     float tmp = 0.0f;
 
-    const block_q_t *  x = (const block_q_t *) vx;
+    const block_q_t  * x = (const block_q_t  *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
-    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row; i += blocks_per_warp) {
-        const int ibx = row * blocks_per_row + i;  // x block index
+    for (int i = item_ct1.get_local_id(2) / (qi / vdr); i < blocks_per_row;
+         i += blocks_per_warp) {
+        const int ibx = row*blocks_per_row + i; // x block index
 
-        const int iby = i * (qk / QK8_1);          // y block index that aligns with ibx
+        const int iby = i * (qk/QK8_1); // y block index that aligns with ibx
 
         const int iqs =
-            vdr * (item_ct1.get_local_id(2) % (qi / vdr));  // x block quant index when casting the quants to int
+            vdr *
+            (item_ct1.get_local_id(2) %
+             (qi / vdr)); // x block quant index when casting the quants to int
 
         tmp += vec_dot_iq4_xs_q8_1(&x[ibx], &y[iby], iqs);
     }
@@ -465,7 +525,8 @@ static void mul_mat_vec_q_iq4_xs_q8_1(const void * __restrict__ vx, const void *
     // sum up partial sums and write back result
 #pragma unroll
     for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
-        tmp += dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
+        tmp +=
+            dpct::permute_sub_group_by_xor(item_ct1.get_sub_group(), tmp, mask);
     }
 
     if (item_ct1.get_local_id(2) == 0) {
@@ -498,9 +559,7 @@ static void mul_mat_vec_q4_0_q8_1_sycl(const void * vx, const void * vy, float *
     const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
     const sycl::range<3> block_nums(1, 1, block_num_y);
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
-    // printf("mmvq nrows=%d, ncols=%d\n", nrows, ncols);
-    // printf("global_size=%zu,%zu,%zu, local_size=%zu,%zu,%zu\n", block_nums[0], block_nums[1], block_dims[2] * block_nums[2],
-                                                                // block_dims[0], block_dims[1], block_dims[2]);
+
     {
         stream->submit([&](sycl::handler & cgh) {
             cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
@@ -512,6 +571,173 @@ static void mul_mat_vec_q4_0_q8_1_sycl(const void * vx, const void * vy, float *
     }
 }
 
+static void mul_mat_vec_q4_1_q8_1_sycl(const void *vx, const void *vy,
+                                       float *dst, const int ncols,
+                                       const int nrows,
+                                       dpct::queue_ptr stream) {
+    GGML_ASSERT(ncols % QK4_1 == 0);
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const sycl::range<3> block_nums(1, 1, block_num_y);
+    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
+    {
+
+        stream->submit([&](sycl::handler &cgh) {
+
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q<QK4_0, QI4_1, block_q4_1,
+                                      VDR_Q4_1_Q8_1_MMVQ, vec_dot_q4_1_q8_1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
+        });
+    }
+}
+
+static void mul_mat_vec_q5_0_q8_1_sycl(const void *vx, const void *vy,
+                                       float *dst, const int ncols,
+                                       const int nrows,
+                                       dpct::queue_ptr stream) {
+    GGML_ASSERT(ncols % QK5_0 == 0);
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const sycl::range<3> block_nums(1, 1, block_num_y);
+    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
+    {
+
+        stream->submit([&](sycl::handler &cgh) {
+
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q<QK5_0, QI5_0, block_q5_0,
+                                      VDR_Q5_0_Q8_1_MMVQ, vec_dot_q5_0_q8_1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
+        });
+    }
+}
+
+static void mul_mat_vec_q5_1_q8_1_sycl(const void *vx, const void *vy,
+                                       float *dst, const int ncols,
+                                       const int nrows,
+                                       dpct::queue_ptr stream) {
+    GGML_ASSERT(ncols % QK5_1 == 0);
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const sycl::range<3> block_nums(1, 1, block_num_y);
+    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
+    {
+
+        stream->submit([&](sycl::handler &cgh) {
+
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q<QK5_1, QI5_1, block_q5_1,
+                                      VDR_Q5_1_Q8_1_MMVQ, vec_dot_q5_1_q8_1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
+        });
+    }
+}
+
+static void mul_mat_vec_q8_0_q8_1_sycl(const void *vx, const void *vy,
+                                       float *dst, const int ncols,
+                                       const int nrows,
+                                       dpct::queue_ptr stream) {
+    GGML_ASSERT(ncols % QK8_0 == 0);
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const sycl::range<3> block_nums(1, 1, block_num_y);
+    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
+    {
+
+        stream->submit([&](sycl::handler &cgh) {
+
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q<QK8_0, QI8_0, block_q8_0,
+                                      VDR_Q8_0_Q8_1_MMVQ, vec_dot_q8_0_q8_1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
+        });
+    }
+}
+
+static void mul_mat_vec_q2_K_q8_1_sycl(const void *vx, const void *vy,
+                                       float *dst, const int ncols,
+                                       const int nrows,
+                                       dpct::queue_ptr stream) {
+    GGML_ASSERT(ncols % QK_K == 0);
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const sycl::range<3> block_nums(1, 1, block_num_y);
+    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
+    {
+
+        stream->submit([&](sycl::handler &cgh) {
+
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q<QK_K, QI2_K, block_q2_K,
+                                      VDR_Q2_K_Q8_1_MMVQ, vec_dot_q2_K_q8_1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
+        });
+    }
+}
+
+static void mul_mat_vec_q3_K_q8_1_sycl(const void *vx, const void *vy,
+                                       float *dst, const int ncols,
+                                       const int nrows,
+                                       dpct::queue_ptr stream) {
+    GGML_ASSERT(ncols % QK_K == 0);
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const sycl::range<3> block_nums(1, 1, block_num_y);
+    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
+    {
+
+        stream->submit([&](sycl::handler &cgh) {
+
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q<QK_K, QI3_K, block_q3_K,
+                                      VDR_Q3_K_Q8_1_MMVQ, vec_dot_q3_K_q8_1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
+        });
+    }
+}
+
+static void mul_mat_vec_q4_K_q8_1_sycl(const void *vx, const void *vy,
+                                       float *dst, const int ncols,
+                                       const int nrows,
+                                       dpct::queue_ptr stream) {
+    GGML_ASSERT(ncols % QK_K == 0);
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const sycl::range<3> block_nums(1, 1, block_num_y);
+    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
+    {
+
+        stream->submit([&](sycl::handler &cgh) {
+
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q<QK_K, QI4_K, block_q4_K,
+                                      VDR_Q4_K_Q8_1_MMVQ, vec_dot_q4_K_q8_1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
+        });
+    }
+}
 
 static void reorder_mul_mat_vec_q4_k_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols,
     const int nrows, dpct::queue_ptr stream) {
@@ -632,250 +858,166 @@ static void mul_mat_vec_iq2_xs_q8_1_sycl(const void *vx, const void *vy,
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
     {
         stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q<QK4_0, QI4_0, block_q4_0, VDR_Q4_0_Q8_1_MMVQ, vec_dot_q4_0_q8_1>(
-                                     vx, vy, dst, ncols, nrows, item_ct1);
-                             });
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q_iq2_xs_q8_1<QK_K, QI2_XS/2, block_iq2_xs, 1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
         });
     }
 }
 
-static void mul_mat_vec_q4_1_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols, const int nrows,
-                                       dpct::queue_ptr stream) {
-    GGML_ASSERT(ncols % QK4_1 == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
-    const sycl::range<3> block_nums(1, 1, block_num_y);
-    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
-    {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q<QK4_0, QI4_1, block_q4_1, VDR_Q4_1_Q8_1_MMVQ, vec_dot_q4_1_q8_1>(
-                                     vx, vy, dst, ncols, nrows, item_ct1);
-                             });
-        });
-    }
-}
-
-static void mul_mat_vec_q5_0_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols, const int nrows,
-                                       dpct::queue_ptr stream) {
-    GGML_ASSERT(ncols % QK5_0 == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
-    const sycl::range<3> block_nums(1, 1, block_num_y);
-    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
-    {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q<QK5_0, QI5_0, block_q5_0, VDR_Q5_0_Q8_1_MMVQ, vec_dot_q5_0_q8_1>(
-                                     vx, vy, dst, ncols, nrows, item_ct1);
-                             });
-        });
-    }
-}
-
-static void mul_mat_vec_q5_1_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols, const int nrows,
-                                       dpct::queue_ptr stream) {
-    GGML_ASSERT(ncols % QK5_1 == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
-    const sycl::range<3> block_nums(1, 1, block_num_y);
-    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
-    {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q<QK5_1, QI5_1, block_q5_1, VDR_Q5_1_Q8_1_MMVQ, vec_dot_q5_1_q8_1>(
-                                     vx, vy, dst, ncols, nrows, item_ct1);
-                             });
-        });
-    }
-}
-
-static void mul_mat_vec_q8_0_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols, const int nrows,
-                                       dpct::queue_ptr stream) {
-    GGML_ASSERT(ncols % QK8_0 == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
-    const sycl::range<3> block_nums(1, 1, block_num_y);
-    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
-    {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q<QK8_0, QI8_0, block_q8_0, VDR_Q8_0_Q8_1_MMVQ, vec_dot_q8_0_q8_1>(
-                                     vx, vy, dst, ncols, nrows, item_ct1);
-                             });
-        });
-    }
-}
-
-static void mul_mat_vec_q2_K_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols, const int nrows,
-                                       dpct::queue_ptr stream) {
+static void mul_mat_vec_iq2_s_q8_1_sycl(const void *vx, const void *vy,
+                                         float *dst, const int ncols,
+                                         const int nrows,
+                                         dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK_K == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
     const sycl::range<3> block_nums(1, 1, block_num_y);
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
     {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q<QK_K, QI2_K, block_q2_K, VDR_Q2_K_Q8_1_MMVQ, vec_dot_q2_K_q8_1>(
-                                     vx, vy, dst, ncols, nrows, item_ct1);
-                             });
+
+        stream->submit([&](sycl::handler &cgh) {
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q_iq2_s_q8_1<QK_K, QI2_S/2, block_iq2_s, 1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
         });
     }
 }
 
-static void mul_mat_vec_q3_K_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols, const int nrows,
-                                       dpct::queue_ptr stream) {
+static void mul_mat_vec_iq3_xxs_q8_1_sycl(const void *vx, const void *vy,
+                                          float *dst, const int ncols,
+                                          const int nrows,
+                                          dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK_K == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
     const sycl::range<3> block_nums(1, 1, block_num_y);
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
     {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q<QK_K, QI3_K, block_q3_K, VDR_Q3_K_Q8_1_MMVQ, vec_dot_q3_K_q8_1>(
-                                     vx, vy, dst, ncols, nrows, item_ct1);
-                             });
+
+        stream->submit([&](sycl::handler &cgh) {
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q_iq3_xxs_q8_1<QK_K, QI3_XXS/2, block_iq3_xxs, 1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
         });
     }
 }
 
-static void mul_mat_vec_q4_K_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols, const int nrows,
-                                       dpct::queue_ptr stream) {
+static void mul_mat_vec_iq3_s_q8_1_sycl(const void *vx, const void *vy,
+                                          float *dst, const int ncols,
+                                          const int nrows,
+                                          dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK_K == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
     const sycl::range<3> block_nums(1, 1, block_num_y);
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
     {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q<QK_K, QI4_K, block_q4_K, VDR_Q4_K_Q8_1_MMVQ, vec_dot_q4_K_q8_1>(
-                                     vx, vy, dst, ncols, nrows, item_ct1);
-                             });
+
+        stream->submit([&](sycl::handler &cgh) {
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q_iq3_s_q8_1<QK_K, QI3_S/2, block_iq3_s, 1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
         });
     }
 }
 
-
-static void mul_mat_vec_iq2_s_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols, const int nrows,
-                                        dpct::queue_ptr stream) {
+static void mul_mat_vec_iq1_s_q8_1_sycl(const void *vx, const void *vy,
+                                          float *dst, const int ncols,
+                                          const int nrows,
+                                          dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK_K == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
     const sycl::range<3> block_nums(1, 1, block_num_y);
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
     {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q_iq2_s_q8_1<QK_K, QI2_S / 2, block_iq2_s, 1>(vx, vy, dst, ncols, nrows,
-                                                                                           item_ct1);
-                             });
+
+        stream->submit([&](sycl::handler &cgh) {
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q_iq1_s_q8_1<QK_K, QI1_S, block_iq1_s, 1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
         });
     }
 }
 
-static void mul_mat_vec_iq3_xxs_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols,
-                                          const int nrows, dpct::queue_ptr stream) {
+static void mul_mat_vec_iq1_m_q8_1_sycl(const void *vx, const void *vy,
+                                          float *dst, const int ncols,
+                                          const int nrows,
+                                          dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK_K == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
     const sycl::range<3> block_nums(1, 1, block_num_y);
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
     {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q_iq3_xxs_q8_1<QK_K, QI3_XXS / 2, block_iq3_xxs, 1>(vx, vy, dst, ncols,
-                                                                                                 nrows, item_ct1);
-                             });
+        stream->submit([&](sycl::handler &cgh) {
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q_iq1_m_q8_1<QK_K, QI1_S, block_iq1_m, 1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
         });
     }
 }
 
-static void mul_mat_vec_iq3_s_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols, const int nrows,
-                                        dpct::queue_ptr stream) {
-    GGML_ASSERT(ncols % QK_K == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
-    const sycl::range<3> block_nums(1, 1, block_num_y);
-    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
-    {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q_iq3_s_q8_1<QK_K, QI3_S / 2, block_iq3_s, 1>(vx, vy, dst, ncols, nrows,
-                                                                                           item_ct1);
-                             });
-        });
-    }
-}
-
-static void mul_mat_vec_iq1_s_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols, const int nrows,
-                                        dpct::queue_ptr stream) {
-    GGML_ASSERT(ncols % QK_K == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
-    const sycl::range<3> block_nums(1, 1, block_num_y);
-    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
-    {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q_iq1_s_q8_1<QK_K, QI1_S, block_iq1_s, 1>(vx, vy, dst, ncols, nrows,
-                                                                                       item_ct1);
-                             });
-        });
-    }
-}
-
-static void mul_mat_vec_iq1_m_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols, const int nrows,
-                                        dpct::queue_ptr stream) {
-    GGML_ASSERT(ncols % QK_K == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
-    const sycl::range<3> block_nums(1, 1, block_num_y);
-    const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
-    {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q_iq1_m_q8_1<QK_K, QI1_S, block_iq1_m, 1>(vx, vy, dst, ncols, nrows,
-                                                                                       item_ct1);
-                             });
-        });
-    }
-}
-
-static void mul_mat_vec_iq4_nl_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols,
-                                         const int nrows, dpct::queue_ptr stream) {
+static void mul_mat_vec_iq4_nl_q8_1_sycl(const void *vx, const void *vy,
+                                          float *dst, const int ncols,
+                                          const int nrows,
+                                          dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK4_NL == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
     const sycl::range<3> block_nums(1, 1, block_num_y);
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
     {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q_iq4_nl_q8_1<QK4_NL, QI4_NL, block_iq4_nl, 2>(vx, vy, dst, ncols, nrows,
-                                                                                            item_ct1);
-                             });
+
+        stream->submit([&](sycl::handler &cgh) {
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q_iq4_nl_q8_1<QK4_NL, QI4_NL, block_iq4_nl, 2>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
         });
     }
 }
 
-static void mul_mat_vec_iq4_xs_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols,
-                                         const int nrows, dpct::queue_ptr stream) {
+static void mul_mat_vec_iq4_xs_q8_1_sycl(const void *vx, const void *vy,
+                                          float *dst, const int ncols,
+                                          const int nrows,
+                                          dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK_K == 0);
-    const int            block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
+    const int block_num_y = (nrows + GGML_SYCL_MMV_Y - 1) / GGML_SYCL_MMV_Y;
     const sycl::range<3> block_nums(1, 1, block_num_y);
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, WARP_SIZE);
     {
-        stream->submit([&](sycl::handler & cgh) {
-            cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                             [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 mul_mat_vec_q_iq4_xs_q8_1<QK_K, QI4_XS / 4, block_iq4_xs, 1>(vx, vy, dst, ncols, nrows,
-                                                                                              item_ct1);
-                             });
+
+        stream->submit([&](sycl::handler &cgh) {
+            cgh.parallel_for(
+                sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                        mul_mat_vec_q_iq4_xs_q8_1<QK_K, QI4_XS/4, block_iq4_xs, 1>(
+                            vx, vy, dst, ncols, nrows, item_ct1);
+                    });
         });
     }
 }
