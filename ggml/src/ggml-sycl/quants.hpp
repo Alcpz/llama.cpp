@@ -16,6 +16,7 @@
 
 #include <utility>
 
+#include "ggml-sycl/common.hpp"
 #include "ggml-common.h"
 #include "ggml.h"
 

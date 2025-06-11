@@ -2984,9 +2984,9 @@ enum class mul_mat_algo {
 #if GGML_SYCL_CUTLASS_ENABLE
 inline bool ggml_sycl_supports_mmvcute(enum ggml_type type) {
     switch (type) {
-        case GGML_TYPE_Q4_0:
-            // case GGML_TYPE_Q4_K:
-            // case GGML_TYPE_Q6_K:
+        // case GGML_TYPE_Q4_0:
+        case GGML_TYPE_Q4_K:
+        // case GGML_TYPE_Q6_K:
             return true;
         default:
             return false;
@@ -3014,7 +3014,8 @@ inline bool ggml_sycl_supports_reorder_mul_mat_sycl(enum ggml_type type) {
 
 inline bool ggml_sycl_supports_reorder_cute(enum ggml_type type) {
     switch (type) {
-        case GGML_TYPE_Q4_0:
+        // case GGML_TYPE_Q4_0:
+        case GGML_TYPE_Q4_K:
             return true;
         default:
             return false;

@@ -7,6 +7,7 @@
 
 #include "mmvcute.hpp"
 #include "quants.hpp"
+#include "tiled_gemv.hpp"
 
 #include "dpct/helper.hpp"
 
@@ -21,7 +22,7 @@
 #pragma clang diagnostic ignored "-Wcast-qual"
 #pragma clang diagnostic ignored "-Wunused-local-typedef"
 
-#include <cute/tensor.hpp>
+// #include <cute/tensor.hpp>
 #include <cute/util/debug.hpp>
 
 #pragma clang diagnostic pop
@@ -89,11 +90,11 @@ static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restric
 
 
         // TODO: Generalize with the pipeline prefetch
-        detail::__builtin_IB_subgroup_block_read_prefetch_u32_m1k16v2((long) vx, width - 1, height - 1, width - 1,
-                                                                      { 0, base_row }, detail::CacheControl::kL1C_L3C);
-        detail::__builtin_IB_subgroup_block_read_prefetch_u32_m1k16v2((long) vx, width - 1, height - 1, width - 1,
-                                                                      { WARP_SIZE * block_traits::vdr_mmvq, base_row },
-                                                                      detail::CacheControl::kL1C_L3C);
+        // detail::__builtin_IB_subgroup_block_read_prefetch_u32_m1k16v2((long) vx, width - 1, height - 1, width - 1,
+        //                                                               { 0, base_row }, detail::CacheControl::kL1C_L3C);
+        // detail::__builtin_IB_subgroup_block_read_prefetch_u32_m1k16v2((long) vx, width - 1, height - 1, width - 1,
+        //                                                               { WARP_SIZE * block_traits::vdr_mmvq, base_row },
+        //                                                               detail::CacheControl::kL1C_L3C);
     }
 #endif
 
@@ -108,9 +109,9 @@ static void mul_mat_vec_ocl(const void * __restrict__ vx, const void * __restric
 
 #ifdef __SYCL_DEVICE_ONLY__
             const size_t base_x_coord = (i / blocks_per_subgroup) * (block_traits::vdr_mmvq * WARP_SIZE);
-            detail::__builtin_IB_subgroup_block_read_prefetch_u32_m1k16v2((long) vx, width - 1, height - 1, width - 1,
-                                                                          { base_x_coord + pipeline_prefetch * (block_traits::vdr_mmvq * WARP_SIZE), base_row },
-                                                                          detail::CacheControl::kL1C_L3C);
+            // detail::__builtin_IB_subgroup_block_read_prefetch_u32_m1k16v2((long) vx, width - 1, height - 1, width - 1,
+            //                                                               { base_x_coord + pipeline_prefetch * (block_traits::vdr_mmvq * WARP_SIZE), base_row },
+            //                                                               detail::CacheControl::kL1C_L3C);
 #endif
             const size_t base_iq_index = (i / blocks_per_subgroup) * (block_traits::vdr_mmvq * WARP_SIZE);
 
@@ -173,14 +174,14 @@ static __dpct_inline__ float vec_dot_q4_0_q8_1([[maybe_unused]] const void * __r
         uint v = 0;
 
         const size_t     load_sg_index = base_iq_index + (q * WARP_SIZE);
-        vector_t<int, 2> coord         = { load_sg_index, row };
+        // vector_t<int, 2> coord         = { load_sg_index, row };
 
 #ifdef __SYCL_DEVICE_ONLY__
         size_t width  = ncols / (q4_0_traits::qr);
         size_t height = nrows;  // INFO: nrows
 
-        *reinterpret_cast<uint *>(&v) = detail::__builtin_IB_subgroup_block_read_flat_u32_m1k16v1(
-            (long) (vbq), width - 1, height - 1, width - 1, coord);
+        // *reinterpret_cast<uint *>(&v) = detail::__builtin_IB_subgroup_block_read_flat_u32_m1k16v1(
+        //     (long) (vbq), width - 1, height - 1, width - 1, coord);
 #endif
 
         // if (ThreadIdxX() == 0) {
@@ -245,9 +246,6 @@ void ggml_sycl_op_mul_mat_vec_cute(ggml_backend_sycl_context & ctx, const ggml_t
     const int64_t ne00     = src0->ne[0];
     const int64_t row_diff = row_high - row_low;
 
-    // TODO: Figure out what this comments means
-    // the main device has a larger memory buffer to hold the results from all GPUs
-    // nrows_dst == nrows of the matrix that the kernel writes into
     for (int i = 0; i < src1_ncols; i++) {
         const size_t src1_ddq_i_offset = i * src1_padded_col_size * q8_1_ts / q8_1_bs;
         const char * src1_ddq_i_bs     = src1_ddq_i + src1_ddq_i_offset;
@@ -255,6 +253,9 @@ void ggml_sycl_op_mul_mat_vec_cute(ggml_backend_sycl_context & ctx, const ggml_t
         switch (src0->type) {
             case GGML_TYPE_Q4_0:
                 mul_mat_vec_cute_q4_0_q8_1_sycl(src0_dd_i, src1_ddq_i_bs, dst_dd_i_bs, ne00, row_diff, stream);
+                break;
+            case GGML_TYPE_Q4_K:
+                mul_mat_q4_K_q8_1_tiled_gemv(src0_dd_i, src1_ddq_i_bs, dst_dd_i_bs, ne00, row_diff, stream);
                 break;
             default:
                 GGML_ABORT("Unsupported quantization reached in mmvcute");
