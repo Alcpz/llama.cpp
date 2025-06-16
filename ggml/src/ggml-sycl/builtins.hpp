@@ -61,4 +61,7 @@ SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_read_prefetch_u32_m1k16v1(i
                                                                                int pitch_minus_one, uint2 coord,
                                                                                LSC_LDCC cache_control));
 
+#undef SYCL_DEVICE_BUILTIN
+#undef SYCL_DEVICE_OCL
+
 #endif

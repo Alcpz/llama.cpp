@@ -51,6 +51,7 @@ int g_ggml_sycl_disable_optimize = 0;
 int g_ggml_sycl_disable_graph = 0;
 int g_ggml_sycl_disable_dnn = 0;
 int g_ggml_sycl_prioritize_dmmv = 0;
+int g_ggml_sycl_prioritize_mmvq = 0;
 
 static ggml_sycl_device_info ggml_sycl_init() {
     ggml_sycl_device_info info = {};
@@ -199,6 +200,7 @@ static void ggml_check_sycl() try {
         g_ggml_sycl_disable_graph = get_sycl_env("GGML_SYCL_DISABLE_GRAPH", 1);
         g_ggml_sycl_disable_dnn = get_sycl_env("GGML_SYCL_DISABLE_DNN", 0);
         g_ggml_sycl_prioritize_dmmv = get_sycl_env("GGML_SYCL_PRIORITIZE_DMMV", 0);
+        g_ggml_sycl_prioritize_mmvq = get_sycl_env("GGML_SYCL_PRIORITIZE_MMVQ", 0);
         GGML_SYCL_DEBUG("[SYCL] call ggml_check_sycl\n");
         GGML_LOG_INFO("Running with Environment Variables:\n");
         GGML_LOG_INFO("  GGML_SYCL_DEBUG: %d\n", g_ggml_sycl_debug);
@@ -214,6 +216,7 @@ static void ggml_check_sycl() try {
         GGML_LOG_INFO("  GGML_SYCL_DISABLE_DNN: DNN disabled by compile flag\n");
 #endif
         GGML_LOG_INFO("  GGML_SYCL_PRIORITIZE_DMMV: %d\n", g_ggml_sycl_prioritize_dmmv);
+        GGML_LOG_INFO("  GGML_SYCL_PRIORITIZE_MMVQ: %d\n", g_ggml_sycl_prioritize_mmvq);
         GGML_LOG_INFO("Build with Macros:\n");
 #if defined(GGML_SYCL_FORCE_MMQ)
         GGML_LOG_INFO("  GGML_SYCL_FORCE_MMQ: yes\n");
@@ -3283,8 +3286,9 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
     bool use_mul_mat_vec_cute = ggml_sycl_supports_mmvcute(src0->type) && src1->type == GGML_TYPE_F32 &&
                                 dst->type == GGML_TYPE_F32 && src0->ne[2] == 1 && src0->ne[3] == 1 &&
                                 src1->ne[1] == 1 && src1->ne[2] == 1 && src1->ne[3] == 1;
+    if (g_ggml_sycl_prioritize_mmvq)
+        use_mul_mat_vec_cute = 0;
 #endif
-
 
     // mmvq path is faster in the CUDA backend.
     if (!g_ggml_sycl_prioritize_dmmv && (ctx.stream()->get_backend() == sycl::backend::ext_oneapi_cuda
@@ -3335,7 +3339,7 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
     } else if (use_mul_mat_vec_cute) {
         constexpr bool convert_src1_to_q8_1 = true;
         opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::CUTE);
-        std::cout << "mul_mat_vec_cute" << std::endl;
+        // std::cout << "mul_mat_vec_cute" << std::endl;
         ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_cute, convert_src1_to_q8_1);
 #endif
     } else if (use_dequantize_mul_mat_vec) {

@@ -17,6 +17,31 @@
 #include "ggml.h"
 #include "quants.hpp"
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wgnu-anonymous-struct"
+#pragma clang diagnostic ignored "-Wnested-anon-types"
+#pragma clang diagnostic ignored "-Wsign-compare"
+#pragma clang diagnostic ignored "-Wmissing-noreturn"
+#pragma clang diagnostic ignored "-Wunused-variable"
+#pragma clang diagnostic ignored "-Wcast-qual"
+#pragma clang diagnostic ignored "-Wunused-local-typedef"
+
+#include <cute/util/print.hpp>
+
+#pragma clang diagnostic pop
+
+template <typename... T> static void print(const char * format, const T &... t) {
+    cute::print("Idx: ");
+    cute::print(syclcompat::local_id::x());
+    cute::print(" ");
+    cute::print(format);
+    cute::print(" ");
+    ((cute::print(t), cute::print(" ")), ...);
+    cute::print("\n");
+}
+
 typedef float (*vec_dot_q_sycl_t)(const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1,
                                   const int & iqs);
 
@@ -159,6 +184,11 @@ static __dpct_inline__ float vec_dot_q4_K_q8_1_impl_vmmq(
     float sumf_d = 0.0f;
     float sumf_m = 0.0f;
 
+    // float sumf_d_1 = 0.0f;
+    // float sumf_m_1 = 0.0f;
+    // float sumf_d_2 = 0.0f;
+    // float sumf_m_2 = 0.0f;
+
 #pragma unroll
     for (int i = 0; i < QR4_K; ++i) {
         const int v0i = (v[0] >> (4*i)) & 0x0F0F0F0F;
@@ -167,16 +197,60 @@ static __dpct_inline__ float vec_dot_q4_K_q8_1_impl_vmmq(
         const int dot1 =
             dpct::dp4a(v1i, u[2 * i + 1],
                        dpct::dp4a(v0i, u[2 * i + 0], 0)); // SIMD dot product
+
+        // const int dot1_1 = dpct::dp4a(v0i, u[2 * i + 0], 0);
+        // const int dot1_2 = dpct::dp4a(v1i, u[2 * i + 1], 0);
+        // const int dot1_3 = dot1_1 + dot1_2;
+
+
         const int dot2 =
             dpct::dp4a(0x01010101, u[2 * i + 1],
-                       dpct::dp4a(0x01010101, u[2 * i + 0], 0)); // sum of u
+                       dpct::dp4a(0x01010101, u[2 * i + 0], 0));
+
+        // const int dot2_1 =
+        //     dpct::dp4a(0x01010101, u[2 * i + 0], 0);
+        // const int dot2_2 =
+        //                dpct::dp4a(0x01010101, u[2 * i + 1], 0);
+        // const int dot2_3 = dot2_1 + dot2_2;
 
         sumf_d += d8[i] * (dot1 * sc[i]);
         sumf_m += d8[i] * (dot2 * m[i]);  // multiply constant part of q4_K with sum of q8_1 values
+
+
+        // sumf_d_1 += d8[i] * (dot1_1 * sc[i]);
+        // sumf_d_2 += d8[i] * (dot1_2 * sc[i]);
+        // sumf_m_1 += d8[i] * (dot2_1 * m[i]);
+        // sumf_m_2 += d8[i] * (dot2_2 * m[i]);
+
+    //     if (cute::thread(0)) {
+    //         auto wi_id = syclcompat::local_id::x();
+    //         for (size_t index = 0; index < WARP_SIZE; index++) {
+    //             if (index == wi_id) {
+    //                 print("vec_dot_loop v0i:  ", wi_id, i, v0i, u[2 * i], d8[i]);
+    //                 print("vec_dot_loop v1i:  ", wi_id, i, v1i, u[2 * i + 1], d8[i]);
+    //                 print("vec_dot_loop dot1:  ", wi_id, i, dot1_1, dot1_2, dot1_3, dot1);
+    //                 print("vec_dot_loop dot2:  ", wi_id, i, dot2_1, dot2_2, dot2_3, dot2);
+    //                 print("vec_dot_loop sums:  ", wi_id, i, sumf_d, sumf_m);
+    //                 print("vec_dot_loop sums_1:  ", wi_id, i, sumf_d_1, sumf_m_1);
+    //                 print("vec_dot_loop sums_2:  ", wi_id, i, sumf_d_2, sumf_m_2);
+    //             }
+    //         }
+    //     }
+
     }
 
     const sycl::float2 dm4f =
         dm4.convert<float, sycl::rounding_mode::automatic>();
+
+
+    // if (cute::thread(0)) {
+    //     for (size_t index = 0; index < WARP_SIZE; index++) {
+    //     auto wi_id = syclcompat::local_id::x();
+    //     if (index == wi_id) {
+    //         print("vec_dot_end:  ", dm4f.x(), dm4f.y());
+    //     }
+    //     }
+    // }
 
     return dm4f.x() * sumf_d - dm4f.y() * sumf_m;
 }
@@ -389,6 +463,17 @@ template <> struct reorder_vec_dot_q_sycl<GGML_TYPE_Q4_K> {
             u[2 * i + 0]   = q8[0];
             u[2 * i + 1]   = q8[4];
         }
+
+        // if (cute::thread(0) || cute::thread(8)) {
+        //     auto wi_id = syclcompat::local_id::x();
+        //     for (size_t i = 0; i < WARP_SIZE; i++) {
+        //         if (i == wi_id) {
+        //             print("mmvq_vec_dot_input(0):  ", iqs, v[0], v[0] & 0x0F0F0F0F, u[0], (v[0] >> 4) & 0x0F0F0F0F, u[2]);
+        //             print("mmvq_vec_dot_input(1):  ", iqs + 4, v[1], v[1] & 0x0F0F0F0F, u[1], (v[1] >> 4) & 0x0F0F0F0F, u[3]);
+        //             print("mmvq_vec_dot_scales: ", aux[0], aux[1]);
+        //         }
+        //     }
+        // }
 
         return vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, *dms, d8);
     }
