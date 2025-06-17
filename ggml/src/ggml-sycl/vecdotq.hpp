@@ -222,20 +222,20 @@ static __dpct_inline__ float vec_dot_q4_K_q8_1_impl_vmmq(
         // sumf_m_1 += d8[i] * (dot2_1 * m[i]);
         // sumf_m_2 += d8[i] * (dot2_2 * m[i]);
 
-    //     if (cute::thread(0)) {
-    //         auto wi_id = syclcompat::local_id::x();
-    //         for (size_t index = 0; index < WARP_SIZE; index++) {
-    //             if (index == wi_id) {
-    //                 print("vec_dot_loop v0i:  ", wi_id, i, v0i, u[2 * i], d8[i]);
-    //                 print("vec_dot_loop v1i:  ", wi_id, i, v1i, u[2 * i + 1], d8[i]);
-    //                 print("vec_dot_loop dot1:  ", wi_id, i, dot1_1, dot1_2, dot1_3, dot1);
-    //                 print("vec_dot_loop dot2:  ", wi_id, i, dot2_1, dot2_2, dot2_3, dot2);
-    //                 print("vec_dot_loop sums:  ", wi_id, i, sumf_d, sumf_m);
-    //                 print("vec_dot_loop sums_1:  ", wi_id, i, sumf_d_1, sumf_m_1);
-    //                 print("vec_dot_loop sums_2:  ", wi_id, i, sumf_d_2, sumf_m_2);
-    //             }
-    //         }
-    //     }
+        // if (cute::thread(0)) {
+        //     auto wi_id = syclcompat::local_id::x();
+        //     for (size_t index = 0; index < WARP_SIZE; index++) {
+        //         if (index == wi_id) {
+        //             print("== vec_dot_loop v0i:  ", wi_id, i, v0i, u[2 * i], d8[i]);
+        //             print("== vec_dot_loop dot1:  ", wi_id, i, dot1_1, dot1_2, dot1_3, dot1);
+        //             print("== vec_dot_loop sums_1:  ", wi_id, i, sumf_d_1, sumf_m_1);
+        //             print("vec_dot_loop v1i:  ", wi_id, i, v1i, u[2 * i + 1], d8[i]);
+        //             print("vec_dot_loop dot2:  ", wi_id, i, dot2_1, dot2_2, dot2_3, dot2);
+        //             print("vec_dot_loop sums_2:  ", wi_id, i, sumf_d_2, sumf_m_2);
+        //             print("vec_dot_loop sums:  ", wi_id, i, sumf_d, sumf_m);
+        //         }
+        //     }
+        // }
 
     }
 
@@ -464,13 +464,15 @@ template <> struct reorder_vec_dot_q_sycl<GGML_TYPE_Q4_K> {
             u[2 * i + 1]   = q8[4];
         }
 
-        // if (cute::thread(0) || cute::thread(8)) {
+        // if (cute::thread(0) || cute::thread(15)) {
         //     auto wi_id = syclcompat::local_id::x();
         //     for (size_t i = 0; i < WARP_SIZE; i++) {
         //         if (i == wi_id) {
+        //             print("mmvq_vec_dot_input(0):  ", iqs, j, v[0], u[0], u[2]);
+        //             print("mmvq_vec_dot_input(1):  ", iqs + 4, j, v[1], u[1], u[3]);
         //             print("mmvq_vec_dot_input(0):  ", iqs, v[0], v[0] & 0x0F0F0F0F, u[0], (v[0] >> 4) & 0x0F0F0F0F, u[2]);
         //             print("mmvq_vec_dot_input(1):  ", iqs + 4, v[1], v[1] & 0x0F0F0F0F, u[1], (v[1] >> 4) & 0x0F0F0F0F, u[3]);
-        //             print("mmvq_vec_dot_scales: ", aux[0], aux[1]);
+        //             print("mmvq_vec_dot_scales: ", iqs, d_offset.first, j, aux[0], aux[1]);
         //         }
         //     }
         // }

@@ -51,9 +51,23 @@ static void mul_mat_vec_q_reorder(const void * __restrict__ vx, const void * __r
 
     auto sum = sycl::reduce_over_group(nd_item.get_sub_group(), partial_sum, std::plus<>());
 
+
     if (sg.leader()) {
         dst[row] = sum;
+        // cute::print("dst[%d]: %.8f\n", row, dst[row]);
     }
+
+    // const int32_t* ptr = reinterpret_cast<const int32_t*>(vy);
+    // const int32_t* wtr = reinterpret_cast<const int32_t*>(vx);
+    // if (cute::thread(0)) {
+    //     for (size_t i = 0; i < ncols / 4; i++) {
+    //         if (i > (256 / 4))
+    //         print("mem[", i, "]:", ptr[i]);
+    //         else
+    //           print("mem[", i, "]:", wtr[i], ptr[i]);
+    //     }
+    // }
+
 }
 
 template <int qk, int qi, typename block_q_t, int vdr, vec_dot_q_sycl_t vec_dot_q_sycl>

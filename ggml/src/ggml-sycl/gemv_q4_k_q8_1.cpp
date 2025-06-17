@@ -90,15 +90,16 @@ static __dpct_inline__ uint16 get_quant_tile(const void * weights, size_t ncols,
 
 // Pass V directly.
 static __dpct_inline__ float vec_dot_q4_K_q8_1(const uint32_t q4, const uint8_t * scs, const ggml_half2 * dm4,
-                                               const uint2 & q8, const ggml_half2 ** q8_1_dms, const int & iqs) {
+                                               const uint2 & q8, const ggml_half2 ** q8_1_dms, const int iqs, const int it) {
     int   v[1]      = { q4 };
     int   u[QR4_K]  = { q8[0], q8[1] };
     // TODO: Find a more elegant way to pass the q8_1 block scales
     float d8[QR4_K] = { q8_1_dms[0]->x(), q8_1_dms[1]->x() };
+    const int block_iqs = iqs % 32;
     const uint16_t * scales     = (const uint16_t *) scs;
 
     uint16_t  aux[2];
-    const int j = (QR4_K * ((iqs / 2) / (QI8_1 / 2))) / 2;
+    const int j = (QR4_K * ((block_iqs / 2) / (QI8_1 / 2))) / 2;
     if (j < 2) {
         aux[0] = scales[j + 0] & 0x3f3f;
         aux[1] = scales[j + 2] & 0x3f3f;
@@ -107,15 +108,16 @@ static __dpct_inline__ float vec_dot_q4_K_q8_1(const uint32_t q4, const uint8_t 
         aux[1] = ((scales[j + 2] >> 4) & 0x0f0f) | ((scales[j - 0] & 0xc0c0) >> 2);
     }
 
-    if (cute::thread(0) || cute::thread(4)) {
-        auto wi_id = syclcompat::local_id::x();
-        for (size_t i = 0; i < WARP_SIZE; i++) {
-            if (i == wi_id) {
-                print("vec_dot_input:  ", iqs, v[0], v[0] & 0x0F0F0F0F, u[0], (v[0] >> 4) & 0x0F0F0F0F, u[1]);
-                print("vec_dot_scales: ", aux[0], aux[1]);
-            }
-        }
-    }
+    // if (cute::thread(0) || cute::thread(4)) {
+    //     auto wi_id = syclcompat::local_id::x();
+    //     for (size_t i = 0; i < WARP_SIZE; i++) {
+    //         if (i == wi_id && it == 0) {
+    //             print("vec_dot_input:  ", iqs, block_iqs, j, v[0], u[0], u[1]);
+    //             print("vec_dot_input:  ", iqs, block_iqs, j, v[0], v[0] & 0x0F0F0F0F, u[0], (v[0] >> 4) & 0x0F0F0F0F, u[1]);
+    //             print("vec_dot_scales: ", iqs, j, aux[0], aux[1]);
+    //         }
+    //     }
+    // }
 
     const uint8_t * sc = (const uint8_t *) aux;
     const uint8_t * m  = sc + 2;
@@ -143,8 +145,8 @@ static __dpct_inline__ float vec_dot_q4_K_q8_1(const uint32_t q4, const uint8_t 
         // if (cute::thread(0) || cute::thread(4)) {
         //     auto wi_id = syclcompat::local_id::x();
         //     for (size_t index = 0; index < WARP_SIZE; index++) {
-        //         if (index == wi_id) {
-        //             print("vec_dot_loop:  ", iqs, i, v0i, u[i], dot1, dot2, sumf_d, sumf_m, d8[i]);
+        //         if (index == wi_id && it == 0) {
+        //             print("--- vec_dot_loop:  ", iqs, i, v0i, u[i], dot1, dot2, sumf_d, sumf_m, d8[i]);
         //         }
         //     }
         // }
@@ -194,10 +196,11 @@ __dpct_inline__ inline static void q4_K_q8_1_tiled_gemv(const void * weights, co
     const size_t     coord_range          = ncols / (block_load_data_width * block_q_t::traits::qr);
 
     // Since local_range = WARP_RANGE
-    auto         subgroup_id    = it.get_sub_group().get_group_linear_id();
+    // auto         subgroup_id    = it.get_sub_group().get_group_linear_id();
+    // auto         ggid          = it.get_global_linear_id();
+    const int  workgroup_id = it.get_group_linear_id();
     auto         wi_id          = it.get_local_linear_id();  // subgroup local id = workgroup local id
-    auto         ggid          = it.get_global_linear_id();
-    const size_t tile_row_begin = tile_height * subgroup_id;
+    const size_t tile_row_begin = tile_height * workgroup_id; // TODO: only supports a single sg per wg
     const int    blocks_per_row = ncols / block_q_t::traits::qk;
 
     // TODO: quantization of q8_1 inside the kernel
@@ -247,9 +250,9 @@ __dpct_inline__ inline static void q4_K_q8_1_tiled_gemv(const void * weights, co
         if (tile_coord_begin + prefetch_offset < coord_range) {
             const auto prefetch_coord = uint2{ tile_coord_begin + prefetch_offset, tile_row_begin };
 
-            if (cute::thread(0)) {
-                print("prefetch_coord[0, 1]: ", prefetch_coord[0], prefetch_coord[1]);
-            }
+            // if (cute::thread(0)) {
+            //     print("prefetch_coord[0, 1]: ", prefetch_coord[0], prefetch_coord[1]);
+            // }
 
             prefetch_quant_tile<block_q_t>(weights, ncols, nrows, prefetch_coord, LSC_LDCC_L1C_L3C);
         }
@@ -273,25 +276,25 @@ __dpct_inline__ inline static void q4_K_q8_1_tiled_gemv(const void * weights, co
             reinterpret_cast<const ggml_half2 *>(reinterpret_cast<const uint8_t *>(input) + q8_dm_offsets[1])
         };
 
-        if (ggid == 0 || ggid == 16) {
-            for (size_t i = 0; i < WARP_SIZE; i++) {
-                if (i == wi_id) {
-                    print("ncols: ", ncols);
-                    print("coord: ", q4_coord[0], q4_coord[1]);
-                    // print("q4_k_tile: ", q4_k_tile[0], q4_k_tile[1], q4_k_tile[2], q4_k_tile[3]);
-                    print("qs_idxs: ", qs_idxs[0], qs_idxs[1]);
-                    print("q8_blk: ", qs_idxs[0] / block_q8_1_t::traits::qk, qs_idxs[1] / block_q8_1_t::traits::qk);
-                    // print("q8_qs: ", q8_qs_1, q8_qs_2, qs_idxs_1 / block_q8_1_t::traits::qk, qs_idxs_2 / block_q8_1_t::traits::qk);
-                    // print("q8_dm_offsets: ", q8_dm_offsets_1, q8_dm_offsets_2);
-                    // print("q8_dms:", (float)(q8_dms[0]->x()), (float)(q8_dms[1]->x()));
-                }
-            }
-        }
+        // if (ggid == 0) {
+        //     for (size_t i = 0; i < WARP_SIZE; i++) {
+        //         if (i == wi_id) {
+        //             print("=========");
+        //             print("coord: ", q4_coord[0], q4_coord[1]);
+        //             print("q4_k_tile: ", q4_k_tile[0]);
+        //             print("qs_idxs: ", qs_idxs[0], qs_idxs[1]);
+        //             print("q8_blk: ", qs_idxs[0] / block_q8_1_t::traits::qk, qs_idxs[1] / block_q8_1_t::traits::qk);
+        //             print("q8_qs: ", q8_qs[0], q8_qs[1], qs_idxs[0] / block_q8_1_t::traits::qk, qs_idxs[1] / block_q8_1_t::traits::qk);
+        //             print("q8_dm_offsets: ", q8_dm_offsets[0], q8_dm_offsets[1]);
+        //             print("q8_dms:", (float)(q8_dms[0]->x()), (float)(q8_dms[1]->x()));
+        //         }
+        //     }
+        // }
 
 #pragma unroll(16)
-        for (uint8_t i = 0; i < 1 /* tile_height */; i++) {
+        for (uint8_t i = 0; i < tile_height; i++) {
             const int q4_block_idx =
-                (tile_row_begin + i) * blocks_per_row + (tile_col_begin + wi_id * 4) / block_q_t::traits::qk;
+                (tile_row_begin + i) * blocks_per_row + (tile_col_begin * block_q_t::traits::qr + wi_id * 4) / block_q_t::traits::qk;
             const auto         scs_offsets = block_q_t::get_d_offset(nrows, ncols, q4_block_idx);
             const uint8_t *    scales      = weights_ptr + scs_offsets.first;
             const ggml_half2 * dm          = reinterpret_cast<const ggml_half2 *>(weights_ptr + scs_offsets.second);
@@ -300,6 +303,8 @@ __dpct_inline__ inline static void q4_K_q8_1_tiled_gemv(const void * weights, co
             //     for (size_t j = 0; j < WARP_SIZE; j++) {
             //         if (j == wi_id && i < 1) {
             //             print("q4_k_tile:", (int)q4_k_tile[i], q4_k_tile[i]);
+            //             print("block_calc:", tile_row_begin, i, blocks_per_row, tile_col_begin, wi_id, 4, block_q_t::traits::qk);
+            //             print("q4_block_idx:", q4_block_idx);
             //             print("scs_offsets:", scs_offsets.first, scs_offsets.second);
             //             print("scales:", scales[0]);
             //             print("dm:", static_cast<float>(dm[0][0]), static_cast<float>(dm[0][1]));
@@ -307,15 +312,15 @@ __dpct_inline__ inline static void q4_K_q8_1_tiled_gemv(const void * weights, co
             //     }
             // }
 
-            partial_sums[i] += vec_dot_q4_K_q8_1(q4_k_tile[i], scales, dm, q8_qs, q8_dms, q4_iqs);
+            partial_sums[i] += vec_dot_q4_K_q8_1(q4_k_tile[i], scales, dm, q8_qs, q8_dms, q4_iqs, i);
         }
     }
 
     // const int32_t* ptr = reinterpret_cast<const int32_t*>(input);
     // const int32_t* wtr = reinterpret_cast<const int32_t*>(weights);
     // if (cute::thread(0)) {
-    //     for (size_t i = 0; i < 256 / 4; i++) {
-    //         if (i > (128 / 4))
+    //     for (size_t i = 0; i < ncols / 4; i++) {
+    //         if (i > (256 / 4))
     //         print("mem[", i, "]:", ptr[i]);
     //         else
     //           print("mem[", i, "]:", wtr[i], ptr[i]);
@@ -355,7 +360,7 @@ __dpct_inline__ inline static void q4_K_q8_1_tiled_gemv(const void * weights, co
 #pragma unroll(16)
         for (uint8_t i = 0; i < tile_height; i++) {
             dst[tile_row_begin + i] = partial_sums[i];
-            print("dst[i]:", tile_row_begin, partial_sums[i], dst[tile_row_begin + i]);
+            // print("dst[i]:", tile_row_begin, partial_sums[i], dst[tile_row_begin + i]);
         }
     }
 }
@@ -370,7 +375,7 @@ void mul_mat_q4_K_q8_1_tiled_gemv(const void * vx, const void * vy, float * dst,
 
     const sycl::range<1> global_size(nrows);
     const sycl::range<1> wg_size(tile_height);
-    std::cout << "\nGlobal_range: " << global_size[0] << " Local_range: " << wg_size[0] << std::endl;
+    // std::cout << "\nGlobal_range: " << global_size[0] << " Local_range: " << wg_size[0] << std::endl;
 
     stream->submit([&](sycl::handler & cgh) {
         cgh.parallel_for(sycl::nd_range<1>(global_size, wg_size),
