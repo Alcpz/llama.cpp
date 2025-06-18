@@ -18,11 +18,9 @@
  **************************************************************************/
 
 #include <sycl/sycl.hpp>
-#include <utility>
 
-#include "builtins.hpp"
+// #include "builtins.hpp"
 #include "cacheopts.hpp"
-#include "cute/util/debug.hpp"
 #include "dpct/helper.hpp"
 #include "quants.hpp"
 
@@ -37,7 +35,27 @@
 #pragma clang diagnostic ignored "-Wcast-qual"
 #pragma clang diagnostic ignored "-Wunused-local-typedef"
 
+#include <cute/arch/copy_xe_builtin.hpp>
 #include <cute/util/print.hpp>
+
+using namespace cute::intel;
+
+SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_read_prefetch_u32_m16k16v1(
+    intptr_t baseoffset, int width_minus_one, int height_minus_one, int pitch_minus_one, coord_t coord,
+    CacheControl cache_control));
+
+namespace cute {
+namespace detail {
+template <> struct XeSubgroup2DBlockPrefetch<4, 16, 16, 1> {
+    CUTE_HOST_DEVICE void operator()(const void * srcBasePointer, int memoryWidth, int memoryHeight, int memoryPitch,
+                                     coord_t coordinate) {
+        __builtin_IB_subgroup_block_read_prefetch_u32_m16k16v1((intptr_t) srcBasePointer, memoryWidth - 1,
+                                                               memoryHeight - 1, memoryPitch - 1, coordinate,
+                                                               CacheControl::kL1C_L3C);
+    }
+};
+}  // namespace detail
+}  // namespace cute
 
 #pragma clang diagnostic pop
 
@@ -51,34 +69,49 @@ template <typename... T> void print(const char * format, const T &... t) {
     cute::print("\n");
 }
 
-constexpr size_t tile_height = 16;
+template <int ElementSize, int Cols, int Rows, int Values> struct BlockLayout {
+    constexpr int total_bytes() const { return element_size * rows * cols; }
+
+    static constexpr int element_size = ElementSize;
+    static constexpr int rows         = Rows;
+    static constexpr int cols         = Cols;
+    static constexpr int values       = Values;
+};
 
 // INFO: u32 k16 loads a whole superblock in two loads
-template <typename block_q_t>
-static __dpct_inline__ void prefetch_quant_tile(const void * weights, size_t ncols, size_t nrows, uint2 coord,
-                                                LSC_LDCC cache_policy) {
+template <typename block_q_t, typename block_layout>
+static __dpct_inline__ void prefetch_quant_tile(const void * weights, size_t ncols, size_t nrows, coord_t coord
+                                                /*, LSC_LDCC cache_policy */) {
 #ifdef __SYCL_DEVICE_ONLY__
+    using namespace cute::detail;
+
     size_t width = ncols / (block_q_t::traits::qr);
-    __builtin_IB_subgroup_block_read_prefetch_u32_m16k16v1((intptr_t) weights, width - 1, nrows - 1, width - 1, coord,
-                                                           cache_policy);
+    // __builtin_IB_subgroup_block_read_prefetch_u32_m16k16v1((intptr_t) weights, width - 1, nrows - 1, width - 1, coord,
+    //                                                        cache_policy);
+    XeSubgroup2DBlockPrefetch<block_layout::element_size, block_layout::cols, block_layout::rows,
+                              block_layout::values>()(weights, width, nrows, width, coord);
 #else
     (void) weights;
     (void) nrows;
     (void) ncols;
     (void) coord;
-    (void) cache_policy;
+    // (void) cache_policy;
     GGML_ABORT("Host code should not get here");
 #endif
 }
 
-template <typename block_q_t>
-static __dpct_inline__ uint16 get_quant_tile(const void * weights, size_t ncols, size_t nrows, uint2 coord) {
+template <typename block_q_t, typename block_layout>
+static __dpct_inline__ void get_quant_tile(const void * weights, size_t ncols, size_t nrows, coord_t coord, void * tile) {
 #ifdef __SYCL_DEVICE_ONLY__
+    using namespace cute::detail;
+
     // Width is expected in bytes. Quants are packed in bytes, 1 col == 1 nibble (q4_K)
-    size_t width = ncols / (block_q_t::traits::qr);
-    auto   values =
-        __builtin_IB_subgroup_block_read_flat_u32_m16k16v1((intptr_t) weights, width - 1, nrows - 1, width - 1, coord);
-    return *reinterpret_cast<uint16 *>(&values);
+    size_t width  = ncols / (block_q_t::traits::qr);
+    // auto values =
+    //     __builtin_IB_subgroup_block_read_flat_u32_m16k16v1((intptr_t) weights, width - 1, nrows - 1, width - 1, coord);
+    // XeSubgroup2DBlockLoad<Bytes, M,K,V>
+    XeSubgroup2DBlockLoad<block_layout::element_size, block_layout::cols, block_layout::cols,
+                                          block_layout::values>()(weights, width, nrows, width, coord, tile);
 #else
     (void) weights;
     (void) nrows;
@@ -90,13 +123,14 @@ static __dpct_inline__ uint16 get_quant_tile(const void * weights, size_t ncols,
 
 // Pass V directly.
 static __dpct_inline__ float vec_dot_q4_K_q8_1(const uint32_t q4, const uint8_t * scs, const ggml_half2 * dm4,
-                                               const uint2 & q8, const ggml_half2 ** q8_1_dms, const int iqs, const int it) {
-    int   v[1]      = { q4 };
-    int   u[QR4_K]  = { q8[0], q8[1] };
+                                               const uint2 & q8, const ggml_half2 ** q8_1_dms, const int iqs,
+                                               const int it) {
+    int              v[1]      = { q4 };
+    int              u[QR4_K]  = { q8[0], q8[1] };
     // TODO: Find a more elegant way to pass the q8_1 block scales
-    float d8[QR4_K] = { q8_1_dms[0]->x(), q8_1_dms[1]->x() };
-    const int block_iqs = iqs % 32;
-    const uint16_t * scales     = (const uint16_t *) scs;
+    float            d8[QR4_K] = { q8_1_dms[0]->x(), q8_1_dms[1]->x() };
+    const int        block_iqs = iqs % 32;
+    const uint16_t * scales    = (const uint16_t *) scs;
 
     uint16_t  aux[2];
     const int j = (QR4_K * ((block_iqs / 2) / (QI8_1 / 2))) / 2;
@@ -133,24 +167,22 @@ static __dpct_inline__ float vec_dot_q4_K_q8_1(const uint32_t q4, const uint8_t 
 
 #pragma unroll(QR4_K)
     for (int i = 0; i < QR4_K; ++i) {
+        const int v0i = (v[0] >> (4 * i)) & 0x0f0f0f0f;
 
-        const int v0i = (v[0] >> (4 * i)) & 0x0F0F0F0F;
-
-        const int dot1 = dpct::dp4a(v0i, u[i], 0);         // SIMD dot product
+        const int dot1 = dpct::dp4a(v0i, u[i], 0);         // simd dot product
         const int dot2 = dpct::dp4a(0x01010101, u[i], 0);  // sum of u
 
         sumf_d += d8[i] * (dot1 * sc[i]);
-        sumf_m += d8[i] * (dot2 * m[i]);  // multiply constant part of q4_K with sum of q8_1 values
+        sumf_m += d8[i] * (dot2 * m[i]);  // multiply constant part of q4_k with sum of q8_1 values
 
         // if (cute::thread(0) || cute::thread(4)) {
         //     auto wi_id = syclcompat::local_id::x();
-        //     for (size_t index = 0; index < WARP_SIZE; index++) {
+        //     for (size_t index = 0; index < warp_size; index++) {
         //         if (index == wi_id && it == 0) {
         //             print("--- vec_dot_loop:  ", iqs, i, v0i, u[i], dot1, dot2, sumf_d, sumf_m, d8[i]);
         //         }
         //     }
         // }
-
     }
 
     const sycl::float2 dm4f = dm4->convert<float, sycl::rounding_mode::automatic>();
@@ -167,7 +199,6 @@ static __dpct_inline__ float vec_dot_q4_K_q8_1(const uint32_t q4, const uint8_t 
     return dm4f.x() * sumf_d - dm4f.y() * sumf_m;
 }
 
-
 // Hardcoded for the ease of development
 // TODO: ncols < 64. Current intrinsic reads 16 int columns per load.
 // Actual width of the data is ncols / qr -> for each block 512 / 2 = 256 bytes
@@ -175,9 +206,8 @@ static __dpct_inline__ float vec_dot_q4_K_q8_1(const uint32_t q4, const uint8_t 
 // 16 * 64 = 4096 bytes
 // TODO: ensure rows * cols > 4096
 template <size_t tile_height, size_t prefetch_pipeline>
-__dpct_inline__ inline static void q4_K_q8_1_tiled_gemv(const void * weights, const void * input, float * dst,
-                                                        const size_t ncols, const size_t nrows,
-                                                        const sycl::nd_item<1> & it) {
+__dpct_inline__ static void q4_K_q8_1_tiled_gemv(const void * weights, const void * input, float * dst,
+                                                 const size_t ncols, const size_t nrows, const sycl::nd_item<1> & it) {
     using block_q_t    = ggml_sycl_reordered::block_q_t<GGML_TYPE_Q4_K>;
     using block_q8_1_t = ggml_sycl_reordered::block_q_t<GGML_TYPE_Q8_1>;
 
@@ -189,18 +219,20 @@ __dpct_inline__ inline static void q4_K_q8_1_tiled_gemv(const void * weights, co
     // 32 x 16 is the problem
     // k16 * v1 * u32 = stride 16 * 4
 
-    constexpr size_t ncols_stride         = 64;  //threads.u32 == 2048 bytes per block load
-    constexpr size_t block_load_data_width = 4;
-    constexpr size_t coord_stride         = 16;
-    constexpr size_t prefetch_offset      = coord_stride * prefetch_pipeline;
-    const size_t     coord_range          = ncols / (block_load_data_width * block_q_t::traits::qr);
+    // bl = Block_load
+    using bl_layout = BlockLayout<4, 16, tile_height, 1>;
+
+    constexpr size_t ncols_stride    = 64;  //threads.u32 == 2048 bytes per block load
+    constexpr size_t coord_stride    = 16;
+    constexpr size_t prefetch_offset = coord_stride * prefetch_pipeline;
+    const size_t     coord_range     = ncols / (bl_layout::element_size * block_q_t::traits::qr);
 
     // Since local_range = WARP_RANGE
     // auto         subgroup_id    = it.get_sub_group().get_group_linear_id();
     // auto         ggid          = it.get_global_linear_id();
-    const int  workgroup_id = it.get_group_linear_id();
-    auto         wi_id          = it.get_local_linear_id();  // subgroup local id = workgroup local id
-    const size_t tile_row_begin = tile_height * workgroup_id; // TODO: only supports a single sg per wg
+    const int    workgroup_id   = it.get_group_linear_id();
+    auto         wi_id          = it.get_local_linear_id();    // subgroup local id = workgroup local id
+    const size_t tile_row_begin = tile_height * workgroup_id;  // TODO: only supports a single sg per wg
     const int    blocks_per_row = ncols / block_q_t::traits::qk;
 
     // TODO: quantization of q8_1 inside the kernel
@@ -221,23 +253,22 @@ __dpct_inline__ inline static void q4_K_q8_1_tiled_gemv(const void * weights, co
     // Warmup Prefetch Tile A
     // TODO: Test prefetch of Q8_1
     // TODO: Tune Prefetch couple of blocks in advance
-    if constexpr (prefetch_pipeline < 2) { // Superblocks are guaranteed to require two loads
-        for (size_t tile_coord_begin = 0; tile_coord_begin < prefetch_offset;
-             tile_coord_begin += coord_stride) {
-            auto prefetch_coord = uint2{ tile_coord_begin, tile_row_begin };
+    if constexpr (prefetch_pipeline < 2) {  // Superblocks are guaranteed to require two loads
+        for (size_t tile_coord_begin = 0; tile_coord_begin < prefetch_offset; tile_coord_begin += coord_stride) {
+            auto prefetch_coord = coord_t{ tile_coord_begin, tile_row_begin };
             // if (cute::thread(0)) {
             //     print("prefetch_coord[0, 1]: ", prefetch_coord[0], prefetch_coord[1]);
             // }
-            prefetch_quant_tile<block_q_t>(weights, ncols, nrows, prefetch_coord, LSC_LDCC_L1C_L3C);
+            prefetch_quant_tile<block_q_t, bl_layout>(weights, ncols, nrows, prefetch_coord);
         }
     } else {
         for (size_t tile_coord_begin = 0; tile_coord_begin < prefetch_offset && tile_coord_begin < coord_range;
              tile_coord_begin += coord_stride) {
-            auto prefetch_coord = uint2{ tile_coord_begin, tile_row_begin };
+            auto prefetch_coord = coord_t{ tile_coord_begin, tile_row_begin };
             // if (cute::thread(0)) {
             //     print("prefetch_coord[0, 1]: ", prefetch_coord[0], prefetch_coord[1]);
             // }
-            prefetch_quant_tile<block_q_t>(weights, ncols, nrows, prefetch_coord, LSC_LDCC_L1C_L3C);
+            prefetch_quant_tile<block_q_t, bl_layout>(weights, ncols, nrows, prefetch_coord);
         }
     }
 
@@ -246,27 +277,28 @@ __dpct_inline__ inline static void q4_K_q8_1_tiled_gemv(const void * weights, co
     // TODO: should we read via L1 and not L3 ? This way we keep the L1 for the current inputs
     // INFO: Current blockloads grabs entire superblock every 2 iterations
     for (size_t tile_col_begin = 0; tile_col_begin < (ncols / block_q_t::traits::qr); tile_col_begin += ncols_stride) {
-        auto tile_coord_begin = tile_col_begin / block_load_data_width;
+        auto tile_coord_begin = tile_col_begin / bl_layout::element_size;
         if (tile_coord_begin + prefetch_offset < coord_range) {
-            const auto prefetch_coord = uint2{ tile_coord_begin + prefetch_offset, tile_row_begin };
+            const auto prefetch_coord = coord_t{ tile_coord_begin + prefetch_offset, tile_row_begin };
 
             // if (cute::thread(0)) {
             //     print("prefetch_coord[0, 1]: ", prefetch_coord[0], prefetch_coord[1]);
             // }
 
-            prefetch_quant_tile<block_q_t>(weights, ncols, nrows, prefetch_coord, LSC_LDCC_L1C_L3C);
+            prefetch_quant_tile<block_q_t, bl_layout>(weights, ncols, nrows, prefetch_coord);
         }
 
-        const auto q4_coord  = uint2{ tile_coord_begin, tile_row_begin };
-        const auto q4_k_tile = get_quant_tile<block_q_t>(weights, ncols, nrows, q4_coord);
-        const auto q4_iqs = (tile_col_begin / block_load_data_width) + wi_id;
+        const auto q4_coord  = coord_t{ tile_coord_begin, tile_row_begin };
+        uint16 q4_k_tile;
+        get_quant_tile<block_q_t, bl_layout>(weights, ncols, nrows, q4_coord, &q4_k_tile);
+        const auto q4_iqs    = (tile_col_begin / bl_layout::element_size) + wi_id;
 
-        const int qs_stride = wi_id * block_load_data_width;
-        const uint2 qs_idxs = { get_q8_1_idx(tile_col_begin + qs_stride, false), get_q8_1_idx(tile_col_begin + qs_stride, true)};
-        const uint2 q8_qs   = { q8_1_qs[qs_idxs[0] / 4],
-                                q8_1_qs[qs_idxs[1] / 4] };
+        const int   qs_stride = wi_id * bl_layout::element_size;
+        const coord_t qs_idxs   = { get_q8_1_idx(tile_col_begin + qs_stride, false),
+                                  get_q8_1_idx(tile_col_begin + qs_stride, true) };
+        const uint2 q8_qs     = { q8_1_qs[qs_idxs[0] / 4], q8_1_qs[qs_idxs[1] / 4] };
 
-        const uint2 q8_dm_offsets = {
+        const coord_t q8_dm_offsets = {
             block_q8_1_t::get_d_offset(1, ncols, qs_idxs[0] / block_q8_1_t::traits::qk).first,
             block_q8_1_t::get_d_offset(1, ncols, qs_idxs[1] / block_q8_1_t::traits::qk).first
         };
@@ -293,8 +325,8 @@ __dpct_inline__ inline static void q4_K_q8_1_tiled_gemv(const void * weights, co
 
 #pragma unroll(16)
         for (uint8_t i = 0; i < tile_height; i++) {
-            const int q4_block_idx =
-                (tile_row_begin + i) * blocks_per_row + (tile_col_begin * block_q_t::traits::qr + wi_id * 4) / block_q_t::traits::qk;
+            const int q4_block_idx = (tile_row_begin + i) * blocks_per_row +
+                                     (tile_col_begin * block_q_t::traits::qr + wi_id * 4) / block_q_t::traits::qk;
             const auto         scs_offsets = block_q_t::get_d_offset(nrows, ncols, q4_block_idx);
             const uint8_t *    scales      = weights_ptr + scs_offsets.first;
             const ggml_half2 * dm          = reinterpret_cast<const ggml_half2 *>(weights_ptr + scs_offsets.second);
@@ -368,10 +400,11 @@ __dpct_inline__ inline static void q4_K_q8_1_tiled_gemv(const void * weights, co
 void mul_mat_q4_K_q8_1_tiled_gemv(const void * vx, const void * vy, float * dst, const size_t ncols, const size_t nrows,
                                   dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK_K == 0);
+
+    constexpr size_t tile_height = 16;
     GGML_ASSERT(nrows % tile_height == 0);
 
-    constexpr size_t tile_height       = 16;
-    constexpr size_t prefetch_pipeline = 2;
+    constexpr size_t prefetch_pipeline = 0;
 
     const sycl::range<1> global_size(nrows);
     const sycl::range<1> wg_size(tile_height);

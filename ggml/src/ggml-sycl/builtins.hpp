@@ -43,7 +43,7 @@ SYCL_DEVICE_BUILTIN(uint16 __builtin_IB_subgroup_block_read_flat_u32_m16k16v1(in
                                                                               int height_minus_one, int pitch_minus_one,
                                                                               uint2 coord));
 
-SYCL_DEVICE_BUILTIN(uint32_t __builtin_IB_subgroup_block_read_flat_u32_m1k16v1(
+SYCL_DEVICE_BUILTIN(uint32_t __builtin_IB_subgroup_block_read_flat_u32_m16k16v1(
     intptr_t baseoffset, int width_minus_one, int height_minus_one, int pitch_minus_one, uint2 coord));
 
 //stores
@@ -60,8 +60,5 @@ SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_read_prefetch_u32_m1k16v1(i
                                                                                int height_minus_one,
                                                                                int pitch_minus_one, uint2 coord,
                                                                                LSC_LDCC cache_control));
-
-#undef SYCL_DEVICE_BUILTIN
-#undef SYCL_DEVICE_OCL
 
 #endif
