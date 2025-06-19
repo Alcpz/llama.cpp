@@ -3092,7 +3092,17 @@ static void reorder_qw_q4_0(uint8_t * data_device, const int ncols, const int nr
     sycl::free(tmp_buf, *stream);
 }
 
-static void reorder_qw_q4_k(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
+enum class reorder_kind_t {
+    BLOCKS = 0,
+    LINEAR = 1,
+    INTERLEAVED_WEIGHTS = 2,
+};
+
+template <reorder_kind_t reorder_kind>
+static void reorder_qw_q4_k(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream);
+
+template <>
+static void reorder_qw_q4_k<reorder_kind_t::BLOCKS>(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
     GGML_ASSERT(size % sizeof(block_q4_K) == 0);
     GGML_ASSERT(offset % sizeof(block_q4_K) == 0);
 
@@ -3121,6 +3131,48 @@ static void reorder_qw_q4_k(uint8_t * data_device, size_t size, size_t offset, d
     }).wait_and_throw();
 
     sycl::free(tmp_buf, *stream);
+}
+
+
+template <>
+static void reorder_qw_q4_k<reorder_kind_t::LINEAR>(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
+
+}
+
+
+template <>
+static void reorder_qw_q4_k<reorder_kind_t::INTERLEAVED_WEIGHTS>(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
+    GGML_ASSERT(size % sizeof(block_q4_K) == 0);
+    GGML_ASSERT(offset % sizeof(block_q4_K) == 0);
+
+    const int nblocks = size / sizeof(block_q4_K);
+
+    auto * tmp_buf = sycl::malloc_shared<uint8_t>(size, *stream);
+    SYCL_CHECK(CHECK_TRY_ERROR((*stream).memcpy(tmp_buf, data_device, size).wait()));
+
+    auto * qs_ptr     = data_device;
+    auto * scales_ptr = qs_ptr + QK_K / 2 * nblocks;
+    auto * dm_ptr     = (sycl::half2 *) (scales_ptr + K_SCALE_SIZE * nblocks);
+
+    stream->parallel_for(nblocks, [=](auto i) {
+        const block_q4_K * x  = (const block_q4_K *) tmp_buf;
+        const int          ib = i;
+
+        auto half = QK_K / 4;
+        for (int j = 0; j < QK_K / 4; ++j) {
+            qs_ptr[ib * (QK_K / 2) + j] = x[ib].qs[j];
+            qs_ptr[ib * (QK_K / 2) + j + half] = x[ib].qs[j + 1];
+        }
+
+        for (int j = 0; j < K_SCALE_SIZE; ++j) {
+            scales_ptr[ib * K_SCALE_SIZE + j] = x[ib].scales[j];
+        }
+
+        dm_ptr[ib] = x[ib].dm;
+    }).wait_and_throw();
+
+    sycl::free(tmp_buf, *stream);
+
 }
 
 static void reorder_qw_q6_k(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
@@ -3167,18 +3219,20 @@ static void reorder_qw_q6_k(uint8_t * data_device, size_t size, size_t offset, d
     sycl::free(tmp_buf, *stream);
 }
 
+
 static void reorder_qw(const ggml_tensor * src0, dpct::queue_ptr stream) {
     uint8_t * data_device = (uint8_t *) src0->data;
     size_t ncols = src0->ne[0];
     size_t nrows = src0->ne[1];
     size_t size = ggml_nbytes(src0);
 
+
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
             reorder_qw_q4_0(data_device, ncols, nrows, size, 0, stream);
             break;
         case GGML_TYPE_Q4_K:
-            reorder_qw_q4_k(data_device, size, 0, stream);
+            reorder_qw_q4_k<reorder_kind_t::BLOCKS>(data_device, size, 0, stream);
             break;
         case GGML_TYPE_Q6_K:
             reorder_qw_q6_k(data_device, size, 0, stream);
