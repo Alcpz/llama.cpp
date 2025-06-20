@@ -18,10 +18,13 @@
  **************************************************************************/
 
 #include <sycl/sycl.hpp>
+#include <utility>
 
 // #include "builtins.hpp"
 #include "cacheopts.hpp"
+#include "cute/util/debug.hpp"
 #include "dpct/helper.hpp"
+#include "ggml-sycl/common.hpp"
 #include "quants.hpp"
 
 #pragma clang diagnostic push
@@ -94,25 +97,20 @@ static __dpct_inline__ void prefetch_quant_tile(const void * weights, size_t nco
     (void) nrows;
     (void) ncols;
     (void) coord;
-    // (void) cache_policy;
     GGML_ABORT("Host code should not get here");
 #endif
 }
 
-template <typename block_q_t, typename block_layout>
-static __dpct_inline__ uint16 get_quant_tile_1(const void * weights, size_t ncols, size_t nrows, coord_t coord
-                                           ) {
+template <typename block_q_t, typename block_layout, typename T>
+static __dpct_inline__ uint16 get_quant_tile_1(const void * weights, size_t ncols, size_t nrows, coord_t coord, T* tile) {
 #ifdef __SYCL_DEVICE_ONLY__
     using namespace cute::detail;
 
     // Width is expected in bytes. Quants are packed in bytes, 1 col == 1 nibble (q4_K)
     size_t width = ncols / (block_q_t::traits::qr);
     // XeSubgroup2DBlockLoad<Bytes, M,K,V>
-    // XeSubgroup2DBlockLoad<element_size, block_layout::cols, block_layout::rows, block_layout::values>()(
-    //     weights, width, nrows, width, coord, tile);
-    auto   values =
-        __builtin_IB_subgroup_block_read_flat_u32_m16k16v1((intptr_t) weights, width - 1, nrows - 1, width - 1, coord);
-    return *reinterpret_cast<uint16 *>(&values);
+    XeSubgroup2DBlockLoad<block_layout::element_size, block_layout::cols, block_layout::rows, block_layout::values>()(
+        weights, width, nrows, width, coord, tile);
 #else
     (void) weights;
     (void) nrows;
@@ -126,8 +124,8 @@ static __dpct_inline__ uint16 get_quant_tile_1(const void * weights, size_t ncol
 __dpct_inline__ float vec_dot_q4_K_q8_1_1(const uint32_t q4, const uint8_t * scs, const ggml_half2 * dm4,
                                           const uint2& q8, const ggml_half2 ** q8_1_dms, const int iqs,
                                           const int it) {
-    const uint32_t v            = q4;
-    const uint32_t u[1 * QR4_K] = {q8[0], q8[1]};
+    const int v            = q4;
+    const int u[1 * QR4_K] = {q8[0], q8[1]};
     // todo: find a more elegant way to pass the q8_1 block scales
     float            d8[QR4_K] = { q8_1_dms[0]->x(), q8_1_dms[1]->x() };
     const int        block_iqs = iqs % 32;
@@ -143,8 +141,25 @@ __dpct_inline__ float vec_dot_q4_K_q8_1_1(const uint32_t q4, const uint8_t * scs
         aux[1] = ((scales[j + 2] >> 4) & 0x0f0f) | ((scales[j - 0] & 0xc0c0) >> 2);
     }
 
+    // if (cute::thread(0) || cute::thread(4)) {
+    //     auto wi_id = syclcompat::local_id::x();
+    //     for (size_t i = 0; i < WARP_SIZE; i++) {
+    //         if (i == wi_id && it == 0) {
+    //             print("vec_dot_input:  ", iqs, block_iqs, j, v[0], u[0], u[1]);
+    //             print("vec_dot_input:  ", iqs, block_iqs, j, v[0], v[0] & 0x0F0F0F0F, u[0], (v[0] >> 4) & 0x0F0F0F0F, u[1]);
+    //             print("vec_dot_scales: ", iqs, j, aux[0], aux[1]);
+    //         }
+    //     }
+    // }
+
     const uint8_t * sc = (const uint8_t *) aux;
     const uint8_t * m  = sc + 2;
+
+    //return vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, dm, d8);
+    //
+    //const int *__restrict__ v, const int *__restrict__ u,
+    //const uint8_t *__restrict__ sc, const uint8_t *__restrict__ m,
+    // const sycl::half2 &dm4, const float *__restrict__ d8) {
 
     float sumf_d = 0.0f;
     float sumf_m = 0.0f;
@@ -180,8 +195,8 @@ __dpct_inline__ float vec_dot_q4_K_q8_1_1(const uint32_t q4, const uint8_t * scs
 __dpct_inline__ float vec_dot_q4_K_q8_1_2(const uint2& q4, const uint8_t * scs, const ggml_half2 * dm4,
                                           const uint4& q8, const ggml_half2 ** q8_1_dms, const int iqs,
                                           const int it) {
-    const uint32_t v[2]         = {q4[0], q4[1]};
-    const uint32_t u[2 * QR4_K] = {q8[0], q8[1], q8[2],q8[3]};
+    const int v[2]         = {q4[0], q4[1]};
+    const int u[2 * QR4_K] = {q8[0], q8[1], q8[2],q8[3]};
 
     // todo: find a more elegant way to pass the q8_1 block scales
     float            d8[QR4_K] = { q8_1_dms[0]->x(), q8_1_dms[1]->x() };
@@ -215,13 +230,11 @@ __dpct_inline__ float vec_dot_q4_K_q8_1_2(const uint2& q4, const uint8_t * scs, 
         sumf_d += d8[i] * (dot1 * sc[i]);
         sumf_m += d8[i] * (dot2 * m[i]);  // multiply constant part of q4_K with sum of q8_1 values
 
-        // if (cute::thread(0)) {
+        // if (cute::thread(0) || cute::thread(4)) {
         //     auto wi_id = syclcompat::local_id::x();
         //     for (size_t index = 0; index < WARP_SIZE; index++) {
-        //         if (index == wi_id) {
-        //             print("== vec_dot_loop v0i:  ", wi_id, i, v0i, u[2 * i], d8[i]);
-        //             print("vec_dot_loop v1i:  ", wi_id, i, v1i, u[2 * i + 1], d8[i]);
-        //             print("vec_dot_loop sums:  ", wi_id, i, sumf_d, sumf_m);
+        //         if (index == wi_id && it == 0) {
+        //             print("--- vec_dot_loop:  ", iqs, i, v0i, u[i], dot1, dot2, sumf_d, sumf_m, d8[i]);
         //         }
         //     }
         // }
@@ -234,7 +247,7 @@ __dpct_inline__ float vec_dot_q4_K_q8_1_2(const uint2& q4, const uint8_t * scs, 
     //     for (size_t index = 0; index < WARP_SIZE; index++) {
     //     auto wi_id = syclcompat::local_id::x();
     //     if (index == wi_id) {
-    //         print("vec_dot_end:  ", dm4f.x(), dm4f.y());
+    //         print("vec_dot_end:  ", iqs, dm4f.x(), dm4f.y());
     //     }
     //     }
     // }
@@ -349,18 +362,19 @@ __dpct_inline__ static void q4_K_q8_1_tiled_gemv_1(const void * weights, const v
         }
 
         const auto q4_coord = coord_t{ tile_coord_begin, tile_row_begin };
-        uint16     q4_k_tile;
 
-        if (ggid == 0) {
-            for (size_t i = 0; i < WARP_SIZE; i++) {
-                if (i == wi_id) {
-                    print("ncols: ", ncols);
-                    print("nrows: ", nrows);
-                    print("coord: ", q4_coord[0], q4_coord[1]);
-                }
-            }
-        }
-        q4_k_tile = get_quant_tile_1<block_q_t, bl_layout>(weights, ncols, nrows, q4_coord);
+        // if (ggid == 0) {
+        //     for (size_t i = 0; i < WARP_SIZE; i++) {
+        //         if (i == wi_id) {
+        //             print("ncols: ", ncols);
+        //             print("nrows: ", nrows);
+        //             print("coord: ", q4_coord[0], q4_coord[1]);
+        //         }
+        //     }
+        // }
+
+        uint16     q4_k_tile;
+        get_quant_tile_1<block_q_t, bl_layout>(weights, ncols, nrows, q4_coord, &q4_k_tile);
         const auto q4_iqs = (tile_col_begin / bl_layout::element_size) + wi_id;
 
         const int     qs_stride = wi_id * bl_layout::element_size;
@@ -368,7 +382,7 @@ __dpct_inline__ static void q4_K_q8_1_tiled_gemv_1(const void * weights, const v
                                     get_q8_1_idx(tile_col_begin + qs_stride, true) };
         const uint2   q8_qs     = { q8_1_qs[qs_idxs[0] / 4], q8_1_qs[qs_idxs[1] / 4] };
 
-        const coord_t q8_dm_offsets = {
+        const uint2 q8_dm_offsets = {
             block_q8_1_t::get_d_offset(1, ncols, qs_idxs[0] / block_q8_1_t::traits::qk).first,
             block_q8_1_t::get_d_offset(1, ncols, qs_idxs[1] / block_q8_1_t::traits::qk).first
         };
@@ -378,20 +392,20 @@ __dpct_inline__ static void q4_K_q8_1_tiled_gemv_1(const void * weights, const v
             reinterpret_cast<const ggml_half2 *>(reinterpret_cast<const uint8_t *>(input) + q8_dm_offsets[1])
         };
 
-        if (ggid == 0) {
-            for (size_t i = 0; i < WARP_SIZE; i++) {
-                if (i == wi_id) {
-                    print("=========");
-                    print("coord: ", q4_coord[0], q4_coord[1]);
-                    print("q4_k_tile: ", q4_k_tile[0]);
-                    print("qs_idxs: ", qs_idxs[0], qs_idxs[1]);
-                    print("q8_blk: ", qs_idxs[0] / block_q8_1_t::traits::qk, qs_idxs[1] / block_q8_1_t::traits::qk);
-                    print("q8_qs: ", q8_qs[0], q8_qs[1], qs_idxs[0] / block_q8_1_t::traits::qk, qs_idxs[1] / block_q8_1_t::traits::qk);
-                    print("q8_dm_offsets: ", q8_dm_offsets[0], q8_dm_offsets[1]);
-                    print("q8_dms:", (float)(q8_dms[0]->x()), (float)(q8_dms[1]->x()));
-                }
-            }
-        }
+        // if (ggid == 0) {
+        //     for (size_t i = 0; i < WARP_SIZE; i++) {
+        //         if (i == wi_id) {
+        //             print("=========");
+        //             print("coord: ", q4_coord[0], q4_coord[1]);
+        //             print("q4_k_tile: ", q4_k_tile[0]);
+        //             print("qs_idxs: ", qs_idxs[0], qs_idxs[1]);
+        //             print("q8_blk: ", qs_idxs[0] / block_q8_1_t::traits::qk, qs_idxs[1] / block_q8_1_t::traits::qk);
+        //             print("q8_qs: ", q8_qs[0], q8_qs[1], qs_idxs[0] / block_q8_1_t::traits::qk, qs_idxs[1] / block_q8_1_t::traits::qk);
+        //             print("q8_dm_offsets: ", q8_dm_offsets[0], q8_dm_offsets[1]);
+        //             print("q8_dms:", (float)(q8_dms[0]->x()), (float)(q8_dms[1]->x()));
+        //         }
+        //     }
+        // }
 
 #pragma unroll(16)
         for (uint8_t i = 0; i < tile_height; i++) {
