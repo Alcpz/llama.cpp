@@ -3133,10 +3133,93 @@ static void reorder_qw_q4_k<reorder_kind_t::BLOCKS>(uint8_t * data_device, size_
     sycl::free(tmp_buf, *stream);
 }
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wgnu-anonymous-struct"
+#pragma clang diagnostic ignored "-Wnested-anon-types"
+#pragma clang diagnostic ignored "-Wsign-compare"
+#pragma clang diagnostic ignored "-Wmissing-noreturn"
+#pragma clang diagnostic ignored "-Wunused-variable"
+#pragma clang diagnostic ignored "-Wcast-qual"
+#pragma clang diagnostic ignored "-Wunused-local-typedef"
+
+#include <cute/util/print.hpp>
+
+#pragma clang diagnostic pop
+
+template <typename... T> void print(const char * format, const T &... t) {
+    cute::print("Idx: ");
+    cute::print(syclcompat::local_id::x());
+    cute::print(" ");
+    cute::print(format);
+    cute::print(" ");
+    ((cute::print(t), cute::print(" ")), ...);
+    cute::print("\n");
+}
 
 template <>
 static void reorder_qw_q4_k<reorder_kind_t::LINEAR>(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
+    GGML_ASSERT(size % sizeof(block_q4_K) == 0);
+    GGML_ASSERT(offset % sizeof(block_q4_K) == 0);
 
+    const int nblocks = size / sizeof(block_q4_K);
+
+    auto * tmp_buf = sycl::malloc_shared<uint8_t>(size, *stream);
+    SYCL_CHECK(CHECK_TRY_ERROR((*stream).memcpy(tmp_buf, data_device, size).wait()));
+
+    auto * qs_ptr     = data_device;
+    auto * scales_ptr = qs_ptr + QK_K / 2 * nblocks;
+    auto * dm_ptr     = (sycl::half2 *) (scales_ptr + K_SCALE_SIZE * nblocks);
+
+    stream->parallel_for(nblocks, [=](auto i) {
+        const block_q4_K * x  = (const block_q4_K *) tmp_buf;
+        const int          ib = i;
+        const size_t block_offset = ib * (QK_K / 2);
+
+#pragma unroll
+        for (int j = 0; j < QK_K / 2; j += 2) {
+            auto offset = (j / 32) * 64 + j % 32;
+
+            // Assuming mem is aligned
+            const uint16_t* qs_u16 = reinterpret_cast<const uint16_t *>(x[ib].qs + j);
+            const uint8_t* qs_pair = reinterpret_cast<const uint8_t *>(qs_u16);
+
+            // Extract low nibbles (0, 1, ..., 64, 65, ...)
+            const uint8_t q0l = qs_pair[0] & 0x0F;
+            const uint8_t q1l = qs_pair[1] & 0x0F;
+
+            // Extract high nibbles (32, 33, ..., 96, 97, ...)
+            const uint8_t q0h = (qs_pair[0] >> 4) & 0x0F;
+            const uint8_t q1h = (qs_pair[1] >> 4) & 0x0F;
+
+            qs_ptr[block_offset + offset / 2] = (q0l << 4) | q1l;
+            qs_ptr[block_offset + offset / 2 + 16] = (q0h << 4) | q1h;
+        }
+
+        for (int j = 0; j < K_SCALE_SIZE; ++j) {
+            scales_ptr[ib * K_SCALE_SIZE + j] = x[ib].scales[j];
+        }
+
+        dm_ptr[ib] = x[ib].dm;
+
+        // if (ib == 0) {
+        //     print("");
+        //     auto range = QK_K / 2;
+        //     for (size_t j = 0; j < range; j++) {
+        //         auto offset = (j / 32) * 64 + j % 32;
+        //         print("unordered[]:", offset, x[ib].qs[j] & 0x0F, offset + 32, (x[ib].qs[j] >> 4) & 0x0F);
+        //     }
+        //     for (size_t j = 0; j < range; j++) {
+        //         uint8_t q = qs_ptr[ib * (QK_K / 2) + j];
+        //         print("reordered[", j, "]:", 2 * j + 1, q & 0x0F, 2 * j, (q >> 4) & 0x0F);
+        //     }
+        // }
+
+    }).wait_and_throw();
+
+
+    sycl::free(tmp_buf, *stream);
 }
 
 
@@ -3172,7 +3255,6 @@ static void reorder_qw_q4_k<reorder_kind_t::INTERLEAVED_WEIGHTS>(uint8_t * data_
     }).wait_and_throw();
 
     sycl::free(tmp_buf, *stream);
-
 }
 
 static void reorder_qw_q6_k(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
@@ -3232,7 +3314,11 @@ static void reorder_qw(const ggml_tensor * src0, dpct::queue_ptr stream) {
             reorder_qw_q4_0(data_device, ncols, nrows, size, 0, stream);
             break;
         case GGML_TYPE_Q4_K:
-            reorder_qw_q4_k<reorder_kind_t::BLOCKS>(data_device, size, 0, stream);
+            if (g_ggml_sycl_prioritize_mmvq) {
+                reorder_qw_q4_k<reorder_kind_t::BLOCKS>(data_device, size, 0, stream);
+            } else {
+                reorder_qw_q4_k<reorder_kind_t::LINEAR>(data_device, size, 0, stream);
+            }
             break;
         case GGML_TYPE_Q6_K:
             reorder_qw_q6_k(data_device, size, 0, stream);
