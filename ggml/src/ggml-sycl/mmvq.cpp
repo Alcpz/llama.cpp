@@ -1,5 +1,6 @@
 #include "mmvq.hpp"
 
+#include "cute/util/debug.hpp"
 #include "ggml.h"
 #include "common.hpp"
 #include "quants.hpp"
@@ -10,6 +11,20 @@ static void mul_mat_vec_q_reorder(const void * __restrict__ vx, const void * __r
                                   const int ncols, const int nrows, const sycl::nd_item<3> & nd_item) {
     using block_type   = ggml_sycl_reordered::block_q_t<reorder_vec_dot_q_sycl::gtype>;
     using block_traits = typename block_type::traits;
+
+
+    // int32_t* ptr_a = const_cast<int32_t *>(reinterpret_cast<const int32_t*>(vx));
+    // int32_t* wtr_b = const_cast<int32_t *>(reinterpret_cast<const int32_t*>(vy));
+    // if (cute::thread(0)) {
+    //     for (size_t i = 0; i < ncols / 4; i++) {
+    //         if (i > (256 / 4)) {
+    //             ptr_a[i] = i;
+    //         } else {
+    //             ptr_a[i] = i;
+    //             wtr_b[i] = i;
+    //         }
+    //     }
+    // }
 
     const auto sg           = nd_item.get_sub_group();
     const int  sg_range     = sg.get_group_linear_range();
@@ -54,15 +69,15 @@ static void mul_mat_vec_q_reorder(const void * __restrict__ vx, const void * __r
 
     if (sg.leader()) {
         dst[row] = sum;
-        // cute::print("dst[%d]: %.8f\n", row, dst[row]);
+        // cute::print("\ndst[%d]: %.8f", row, dst[row]);
     }
 
     // const int32_t* ptr = reinterpret_cast<const int32_t*>(vy);
     // const int32_t* wtr = reinterpret_cast<const int32_t*>(vx);
-    // if (cute::thread(0)) {
+    // if (cute::thread(1)) {
     //     for (size_t i = 0; i < ncols / 4; i++) {
     //         if (i > (256 / 4))
-    //         print("mem[", i, "]:", ptr[i]);
+    //           print("mem[", i, "]:", ptr[i]);
     //         else
     //           print("mem[", i, "]:", wtr[i], ptr[i]);
     //     }
