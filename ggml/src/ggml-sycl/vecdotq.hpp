@@ -179,15 +179,15 @@ static __dpct_inline__ float vec_dot_q3_K_q8_1_impl_mmvq(
 static __dpct_inline__ float vec_dot_q4_K_q8_1_impl_vmmq(
     const int *__restrict__ v, const int *__restrict__ u,
     const uint8_t *__restrict__ sc, const uint8_t *__restrict__ m,
-    const sycl::half2 &dm4, const float *__restrict__ d8, const int iqs) {
+    const sycl::half2 &dm4, const float *__restrict__ d8) {
 
     float sumf_d = 0.0f;
     float sumf_m = 0.0f;
 
-    float sumf_d_1 = 0.0f;
-    float sumf_m_1 = 0.0f;
-    float sumf_d_2 = 0.0f;
-    float sumf_m_2 = 0.0f;
+    // float sumf_d_1 = 0.0f;
+    // float sumf_m_1 = 0.0f;
+    // float sumf_d_2 = 0.0f;
+    // float sumf_m_2 = 0.0f;
 
 
     // if (cute::thread(1) || cute::thread(2) || cute::thread(3)) {
@@ -240,28 +240,28 @@ static __dpct_inline__ float vec_dot_q4_K_q8_1_impl_vmmq(
             dpct::dp4a(v1i, u[2 * i + 1],
                        dpct::dp4a(v0i, u[2 * i + 0], 0)); // SIMD dot product
 
-        const int dot1_1 = dpct::dp4a(v0i, u[2 * i + 0], 0);
-        const int dot1_2 = dpct::dp4a(v1i, u[2 * i + 1], 0);
-        // const int dot1_3 = dot1_1 + dot1_2;
+        // const int dot1_1 = dpct::dp4a(v0i, u[2 * i + 0], 0);
+        // const int dot1_2 = dpct::dp4a(v1i, u[2 * i + 1], 0);
+        // // const int dot1_3 = dot1_1 + dot1_2;
 
 
         const int dot2 =
             dpct::dp4a(0x01010101, u[2 * i + 1],
                        dpct::dp4a(0x01010101, u[2 * i + 0], 0));
 
-        const int dot2_1 =
-            dpct::dp4a(0x01010101, u[2 * i + 0], 0);
-        const int dot2_2 =
-                       dpct::dp4a(0x01010101, u[2 * i + 1], 0);
-        // const int dot2_3 = dot2_1 + dot2_2;
+        // const int dot2_1 =
+        //     dpct::dp4a(0x01010101, u[2 * i + 0], 0);
+        // const int dot2_2 =
+        //                dpct::dp4a(0x01010101, u[2 * i + 1], 0);
+        // // const int dot2_3 = dot2_1 + dot2_2;
 
         sumf_d += d8[i] * (dot1 * sc[i]);
         sumf_m += d8[i] * (dot2 * m[i]);  // multiply constant part of q4_K with sum of q8_1 values
 
-        sumf_d_1 += d8[i] * (dot1_1 * sc[i]);
-        sumf_d_2 += d8[i] * (dot1_2 * sc[i]);
-        sumf_m_1 += d8[i] * (dot2_1 * m[i]);
-        sumf_m_2 += d8[i] * (dot2_2 * m[i]);
+        // sumf_d_1 += d8[i] * (dot1_1 * sc[i]);
+        // sumf_d_2 += d8[i] * (dot1_2 * sc[i]);
+        // sumf_m_1 += d8[i] * (dot2_1 * m[i]);
+        // sumf_m_2 += d8[i] * (dot2_2 * m[i]);
 
         // // if (cute::thread(0)) {
         //     auto wi_id = syclcompat::local_id::x();
@@ -456,7 +456,7 @@ static inline float vec_dot_q4_K_q8_1_common(const int * __restrict__ q4, const 
         u[2 * i + 1]   = q8[4];
     }
 
-    return vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, dm, d8, iqs);
+    return vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, dm, d8);
 }
 
 template <> struct reorder_vec_dot_q_sycl<GGML_TYPE_Q4_K> {
@@ -531,7 +531,7 @@ template <> struct reorder_vec_dot_q_sycl<GGML_TYPE_Q4_K> {
         //     }
         // }
 
-        return vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, *dms, d8, iqs);
+        return vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, *dms, d8);
     }
 };
 

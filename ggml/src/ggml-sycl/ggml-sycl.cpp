@@ -52,6 +52,7 @@ int g_ggml_sycl_disable_graph = 0;
 int g_ggml_sycl_disable_dnn = 0;
 int g_ggml_sycl_prioritize_dmmv = 0;
 int g_ggml_sycl_prioritize_mmvq = 0;
+int g_ggml_sycl_gemv_tile_height = 16;
 
 static ggml_sycl_device_info ggml_sycl_init() {
     ggml_sycl_device_info info = {};
@@ -201,6 +202,7 @@ static void ggml_check_sycl() try {
         g_ggml_sycl_disable_dnn = get_sycl_env("GGML_SYCL_DISABLE_DNN", 0);
         g_ggml_sycl_prioritize_dmmv = get_sycl_env("GGML_SYCL_PRIORITIZE_DMMV", 0);
         g_ggml_sycl_prioritize_mmvq = get_sycl_env("GGML_SYCL_PRIORITIZE_MMVQ", 0);
+        g_ggml_sycl_gemv_tile_height = get_sycl_env("GGML_SYCL_GEMV_TILE_HEIGHT", 16);
         GGML_SYCL_DEBUG("[SYCL] call ggml_check_sycl\n");
         GGML_LOG_INFO("Running with Environment Variables:\n");
         GGML_LOG_INFO("  GGML_SYCL_DEBUG: %d\n", g_ggml_sycl_debug);
@@ -217,6 +219,7 @@ static void ggml_check_sycl() try {
 #endif
         GGML_LOG_INFO("  GGML_SYCL_PRIORITIZE_DMMV: %d\n", g_ggml_sycl_prioritize_dmmv);
         GGML_LOG_INFO("  GGML_SYCL_PRIORITIZE_MMVQ: %d\n", g_ggml_sycl_prioritize_mmvq);
+        GGML_LOG_INFO("  GGML_SYCL_GEMV_TILE_HEIGHT: %d\n", g_ggml_sycl_gemv_tile_height);
         GGML_LOG_INFO("Build with Macros:\n");
 #if defined(GGML_SYCL_FORCE_MMQ)
         GGML_LOG_INFO("  GGML_SYCL_FORCE_MMQ: yes\n");
@@ -3102,7 +3105,7 @@ template <reorder_kind_t reorder_kind>
 static void reorder_qw_q4_k(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream);
 
 template <>
-static void reorder_qw_q4_k<reorder_kind_t::BLOCKS>(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
+void reorder_qw_q4_k<reorder_kind_t::BLOCKS>(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
     GGML_ASSERT(size % sizeof(block_q4_K) == 0);
     GGML_ASSERT(offset % sizeof(block_q4_K) == 0);
 
@@ -3159,7 +3162,7 @@ template <typename... T> void print(const char * format, const T &... t) {
 }
 
 template <>
-static void reorder_qw_q4_k<reorder_kind_t::LINEAR>(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
+void reorder_qw_q4_k<reorder_kind_t::LINEAR>(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
     GGML_ASSERT(size % sizeof(block_q4_K) == 0);
     GGML_ASSERT(offset % sizeof(block_q4_K) == 0);
 
@@ -3224,7 +3227,7 @@ static void reorder_qw_q4_k<reorder_kind_t::LINEAR>(uint8_t * data_device, size_
 
 
 template <>
-static void reorder_qw_q4_k<reorder_kind_t::INTERLEAVED_WEIGHTS>(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
+void reorder_qw_q4_k<reorder_kind_t::INTERLEAVED_WEIGHTS>(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
     GGML_ASSERT(size % sizeof(block_q4_K) == 0);
     GGML_ASSERT(offset % sizeof(block_q4_K) == 0);
 

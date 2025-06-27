@@ -1,6 +1,6 @@
 #include "mmvq.hpp"
 
-#include "cute/util/debug.hpp"
+// #include "cute/util/debug.hpp"
 #include "ggml.h"
 #include "common.hpp"
 #include "quants.hpp"
