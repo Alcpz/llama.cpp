@@ -141,6 +141,26 @@ static __dpct_inline__ void get_quant_tile_tr(const void * weights, size_t ncols
 #endif
 }
 
+template <int tile_height> struct BlockLoadType {};
+template <> struct BlockLoadType<1> {
+    using T = ushort[1];
+};
+template <> struct BlockLoadType<2> {
+    using T = ushort2;
+};
+template <> struct BlockLoadType<4> {
+    using T = ushort4;
+};
+template <> struct BlockLoadType<8> {
+    using T = ushort8;
+};
+template <> struct BlockLoadType<16> {
+    using T = ushort16;
+};
+
+template <int tile_height>
+using block_load_t = typename BlockLoadType<tile_height>::T;
+
 template <int tile_height> struct LayoutTraits {
     // Block Load
     static constexpr int bytes   = 2;
@@ -150,6 +170,7 @@ template <int tile_height> struct LayoutTraits {
 
     using QK_Layout = BlockLayout<bytes, columns, rows, values>;
     using Q8_Layout = BlockLayout<2 * bytes, columns, 1, values>;
+    using QK_tile_t = block_load_t<tile_height>;
 
     // Tiled GemV traits
     static constexpr size_t coord_stride = columns;
@@ -180,6 +201,7 @@ __dpct_inline__ static void q4_K_q8_1_tiled_gemv(const void * weights, const voi
 
     using bl_layout               = typename Traits::QK_Layout;  // bl = Block_load
     using q8_layout               = typename Traits::Q8_Layout;
+    using q4_tile_t               = typename Traits::QK_tile_t;
     constexpr size_t coord_stride = Traits::coord_stride;
     size_t           coord_range  = Traits::template coord_range<block_q_t>(ncols);
 
@@ -198,7 +220,8 @@ __dpct_inline__ static void q4_K_q8_1_tiled_gemv(const void * weights, const voi
         const auto q4_coord = coord_t{ tile_coord_begin, tile_row_begin };
         const auto q8_coord = coord_t{ tile_coord_begin, 0 };
 
-        ushort8 q4_tile;
+        // TODO: Make it trait dependent
+        q4_tile_t q4_tile;
         get_quant_tile<block_q_t, bl_layout>(weights, ncols, nrows, q4_coord, &q4_tile);
 
         uint q8_tile;
