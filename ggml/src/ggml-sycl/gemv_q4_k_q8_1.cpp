@@ -25,6 +25,7 @@
 #include "dpct/helper.hpp"
 #include "ggml-sycl/common.hpp"
 #include "quants.hpp"
+#include "sycl/ext/oneapi/experimental/enqueue_functions.hpp"
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
@@ -120,6 +121,25 @@ static __dpct_inline__ void get_quant_tile(const void * weights, size_t ncols, s
 #endif
 }
 
+template <typename T>
+static __dpct_inline__ void store_tile(const void * dst, size_t ncols, coord_t coord, T * tile) {
+#ifdef __SYCL_DEVICE_ONLY__
+    using namespace cute::detail;
+    constexpr int nrows = 1;
+
+    // Width is expected in bytes. Quants are packed in bytes, 1 col == 1 nibble (q4_K)
+    size_t width = ncols * sizeof(float);
+    // XeSubgroup2DBlockLoad<Bytes,K,M,V>
+    XeSubgroup2DBlockStore<4, 16, 1, 1>()(dst, width, nrows, width, coord, tile);
+#else
+    (void) dst;
+    (void) ncols;
+    (void) coord;
+    (void) tile;
+    GGML_ABORT("Host code should not get here");
+#endif
+}
+
 template <typename block_q_t, typename block_layout, typename T>
 static __dpct_inline__ void get_quant_tile_tr(const void * weights, size_t ncols, size_t nrows, coord_t coord,
                                               T * tile) {
@@ -207,7 +227,7 @@ __dpct_inline__ static void q4_K_q8_1_tiled_gemv(const void * weights, const voi
 
     // Since local_range = WARP_RANGE
     const int     workgroup_id   = it.get_group_linear_id();
-    auto          wi_id          = it.get_local_linear_id();    // subgroup local id = workgroup local id
+    auto          local_id       = it.get_local_linear_id();    // subgroup local id = workgroup local id
     constexpr int tile_height    = Traits::rows;
     const size_t  tile_row_begin = tile_height * workgroup_id;  // TODO: only supports a single sg per wg
     const int     blocks_per_row = ncols / block_q_t::traits::qk;
@@ -227,7 +247,7 @@ __dpct_inline__ static void q4_K_q8_1_tiled_gemv(const void * weights, const voi
         uint q8_tile;
         get_quant_tile<block_q8_t, q8_layout>(input, ncols, nrows, q8_coord, &q8_tile);
 
-        const auto q4_qidx = (tile_coord_begin + wi_id) * Traits::bytes * block_q_t::traits::qr;
+        const auto q4_qidx = (tile_coord_begin + local_id) * Traits::bytes * block_q_t::traits::qr;
 
         const uint q8_dm_offset = block_q8_t::get_d_offset(1, ncols, q4_qidx / block_q8_t::traits::qk).first;
 
@@ -236,10 +256,10 @@ __dpct_inline__ static void q4_K_q8_1_tiled_gemv(const void * weights, const voi
 
         // if (cute::thread(0) || cute::thread(7)) {
         //     for (size_t i = 0; i < WARP_SIZE; i++) {
-        //         if (i == wi_id) {
+        //         if (i == local_id) {
         //             print("=========");
-        //             print("q4_coord: ", q4_coord[0] + wi_id, q4_coord[1]);
-        //             print("q8_coord: ", q8_coord[0] + wi_id, q8_coord[1]);
+        //             print("q4_coord: ", q4_coord[0] + local_id, q4_coord[1]);
+        //             print("q8_coord: ", q8_coord[0] + local_id, q8_coord[1]);
         //             print("q4_tile: ", q4_tile[0], q4_tile[1]);
         //             print("q8_tile: ", q8_tile);
         //             print("q4_qidx: ", q4_qidx);
@@ -257,7 +277,7 @@ __dpct_inline__ static void q4_K_q8_1_tiled_gemv(const void * weights, const voi
             const ggml_half2 * dm4          = reinterpret_cast<const ggml_half2 *>(weights_ptr + scs_offsets.second);
             const sycl::float2 dm4f         = dm4->convert<float, sycl::rounding_mode::automatic>();
 
-            // INFO: Most likely the cause of the slow down, each scale + min is two global loads
+            // INFO: Scales are loaded a lot of times due to how they can't be properly reused
             const int chunk_idx = (q4_qidx / block_q8_t::traits::qk) % 8;
             const int j         = chunk_idx;
 
@@ -273,42 +293,6 @@ __dpct_inline__ static void q4_K_q8_1_tiled_gemv(const void * weights, const voi
                 m = (hbits & 0xc000) >> 10 | ((scales[j + 4] >> 4) & 0x0f);
             }
 
-            // if (cute::thread(0) || cute::thread(8)) {
-            //     for (size_t k = 0; k < WARP_SIZE; k++) {
-            //         if (k == wi_id) {
-            //             if (j < 4) {
-            //                 print("j, scale(2):", j, sc, m, " - ", scales[2 * j] & 0x3f, scales[2 * j + 1] & 0x3f);
-            //             } else {
-            //                 print("j, scale(4):", j, sc, m, " - ", (scales[j + 4] >> 0) & 0x0f, (scales[j + 4] >> 4) & 0x0f, (scales[(j - 4) * 2 + 1] & 0xc0) >> 2, (scales[(j - 4) * 2] & 0xc0) >> 2);
-            //             }
-            //         }
-            //     }
-            // }
-
-            // uint8_t aux[2];
-            // if (j < 4) {
-            //     aux[0] = scales[j + 0] & 0x3f;
-            //     aux[1] = scales[j + 4] & 0x3f;
-            // } else {
-            //     aux[0] = ((scales[j + 4] >> 0) & 0x0f) | ((scales[j - 4] & 0xc0) >> 2);
-            //     aux[1] = ((scales[j + 4] >> 4) & 0x0f) | ((scales[j - 0] & 0xc0) >> 2);
-            // }
-            // const uint8_t sc = aux[0];
-            // const uint8_t m  = aux[1];
-
-            // if (cute::thread(0) || cute::thread(8)) {
-            //     for (size_t k = 0; k < WARP_SIZE; k++) {
-            //         if (k == wi_id) {
-            //             if (j < 4) {
-            //                 print("j, scale(", j, "):", sc, m);
-            //             } else {
-            //                 print("j, scale(", j, "):", sc, m);
-            //             }
-            //         }
-            //     }
-            // }
-
-            // TODO: Adjust dp4a
             const int32_t v    = unpack_q4_tile(q4_tile[i]);
             const int     dot1 = __builtin_IB_dp4a_ss(0, v, q8_tile);
             const int     dot2 = __builtin_IB_dp4a_ss(0, 0x01010101, q8_tile);
@@ -317,10 +301,10 @@ __dpct_inline__ static void q4_K_q8_1_tiled_gemv(const void * weights, const voi
 
             // if (cute::thread(16) || cute::thread(17)) {
             //     for (size_t j = 0; j < 32; j++) {
-            //         if (j == wi_id && i < 1 && (q4_coord[0] == 0)) {
+            //         if (j == local_id && i < 1 && (q4_coord[0] == 0)) {
             //             print("==============");
-            //             print("q4_coord: ", q4_coord[0] + wi_id, q4_coord[1]);
-            //             print("q8_coord: ", q8_coord[0] + wi_id, q8_coord[1]);
+            //             print("q4_coord: ", q4_coord[0] + local_id, q4_coord[1]);
+            //             print("q8_coord: ", q8_coord[0] + local_id, q8_coord[1]);
             //             print("q4_tile: ", q4_tile[i]);
             //             {
             //                 uint8_t q1 = (q4_tile[i] >> 12) & 0x0F;
@@ -376,37 +360,27 @@ __dpct_inline__ static void q4_K_q8_1_tiled_gemv(const void * weights, const voi
     // }
 
     // for (size_t j = 0; j < WARP_SIZE; j++) {
-    //     if (j == wi_id) {
+    //     if (j == local_id) {
     //         print("partial_sums[0]:", partial_sums[0]);
     //     }
     // }
 
     #pragma unroll
-        for (uint8_t i = 0; i < tile_height; i++) {
-            partial_sums[i] = sycl::reduce_over_group(it.get_sub_group(), partial_sums[i], std::plus<>());
-        }
-
-// #pragma unroll
-//     for (uint8_t i = 0; i < tile_height; i++) {
-// #pragma unroll
-//         for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
-//             partial_sums[i] += dpct::permute_sub_group_by_xor(it.get_sub_group(), partial_sums[i], mask);
-//         }
-//     }
-
-    // for (size_t j = 0; j < WARP_SIZE; j++) {
-    //     if (j == wi_id) {
-    //         print("partial_sums[0]:", partial_sums[0]);
-    //     }
-    // }
+    for (size_t i = 0; i < tile_height; i++) {
+        partial_sums[i] = sycl::reduce_over_group(it.get_sub_group(), partial_sums[i], std::plus<>());
+    }
 
     // TODO: Ensure not storing out of bounds (tile_row_begin + i < nrows)
-    if (it.get_sub_group().leader()) {
+    if constexpr (tile_height == 16) {
+        const auto output_coord = coord_t{ tile_row_begin, 0 };
+        const float output = partial_sums[local_id];
+        store_tile(dst, nrows, output_coord, &output);
+    } else {
+        if (it.get_sub_group().leader()) {
 #pragma unroll
-        for (size_t i = 0; i < tile_height; i++) {
-            dst[tile_row_begin + i] = partial_sums[i];
-            // if (workgroup_id == 0)
-            // print("partial_sums[", tile_row_begin + i, "]:", partial_sums[i]);
+            for (size_t i = 0; i < tile_height; i++) {
+                dst[tile_row_begin + i] = partial_sums[i];
+            }
         }
     }
 }
