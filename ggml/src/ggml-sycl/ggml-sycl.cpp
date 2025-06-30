@@ -3200,9 +3200,19 @@ void reorder_qw_q4_k<reorder_kind_t::LINEAR>(uint8_t * data_device, size_t size,
             qs_ptr[block_offset + offset / 2 + 16] = (q0h << 4) | q1h;
         }
 
-        for (int j = 0; j < K_SCALE_SIZE; ++j) {
-            scales_ptr[ib * K_SCALE_SIZE + j] = x[ib].scales[j];
+#pragma unroll
+        for (int j = 0; j < (K_SCALE_SIZE - 4); ++j) {
+            if (j < 4) {
+                scales_ptr[ib * K_SCALE_SIZE + (2 * j)]     = x[ib].scales[j];
+                scales_ptr[ib * K_SCALE_SIZE + (2 * j) + 1] = x[ib].scales[j + 4];
+            } else {
+                scales_ptr[ib * K_SCALE_SIZE + j + 4] = x[ib].scales[j + 4];
+            }
         }
+
+        // for (int j = 0; j < K_SCALE_SIZE; ++j) {
+        //     scales_ptr[ib * K_SCALE_SIZE + j] = x[ib].scales[j];
+        // }
 
         dm_ptr[ib] = x[ib].dm;
 
@@ -3217,6 +3227,13 @@ void reorder_qw_q4_k<reorder_kind_t::LINEAR>(uint8_t * data_device, size_t size,
         //         uint8_t q = qs_ptr[ib * (QK_K / 2) + j];
         //         print("reordered[", j, "]:", 2 * j + 1, q & 0x0F, 2 * j, (q >> 4) & 0x0F);
         //     }
+        // }
+
+        // if (ib == 1) {
+        //     print("");
+        //     print("unordered[]:", x[ib].scales[0], x[ib].scales[1], x[ib].scales[2], x[ib].scales[3], ",", x[ib].scales[4], x[ib].scales[5], x[ib].scales[6], x[ib].scales[7], ",", x[ib].scales[8], x[ib].scales[9], x[ib].scales[10], x[ib].scales[11]);
+        //     uint8_t* scales = &scales_ptr[ib * K_SCALE_SIZE];
+        //     print("reordered[]:", scales[0], scales[1], scales[2], scales[3], ",", scales[4], scales[5], scales[6], scales[7], ",", scales[8], scales[9], scales[10], scales[11]);
         // }
 
     }).wait_and_throw();
