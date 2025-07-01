@@ -52,7 +52,8 @@ int g_ggml_sycl_disable_graph = 0;
 int g_ggml_sycl_disable_dnn = 0;
 int g_ggml_sycl_prioritize_dmmv = 0;
 int g_ggml_sycl_prioritize_mmvq = 0;
-int g_ggml_sycl_gemv_tile_height = 16;
+int g_ggml_sycl_gemv_tile_height = 0;
+int g_ggml_sycl_gemv_reorder_format = 0;
 
 static ggml_sycl_device_info ggml_sycl_init() {
     ggml_sycl_device_info info = {};
@@ -203,6 +204,7 @@ static void ggml_check_sycl() try {
         g_ggml_sycl_prioritize_dmmv = get_sycl_env("GGML_SYCL_PRIORITIZE_DMMV", 0);
         g_ggml_sycl_prioritize_mmvq = get_sycl_env("GGML_SYCL_PRIORITIZE_MMVQ", 0);
         g_ggml_sycl_gemv_tile_height = get_sycl_env("GGML_SYCL_GEMV_TILE_HEIGHT", 16);
+        g_ggml_sycl_gemv_reorder_format = get_sycl_env("GGML_SYCL_GEMV_REORDER_FORMAT", (int)reorder_kind_t::LINEAR);
         GGML_SYCL_DEBUG("[SYCL] call ggml_check_sycl\n");
         GGML_LOG_INFO("Running with Environment Variables:\n");
         GGML_LOG_INFO("  GGML_SYCL_DEBUG: %d\n", g_ggml_sycl_debug);
@@ -220,6 +222,7 @@ static void ggml_check_sycl() try {
         GGML_LOG_INFO("  GGML_SYCL_PRIORITIZE_DMMV: %d\n", g_ggml_sycl_prioritize_dmmv);
         GGML_LOG_INFO("  GGML_SYCL_PRIORITIZE_MMVQ: %d\n", g_ggml_sycl_prioritize_mmvq);
         GGML_LOG_INFO("  GGML_SYCL_GEMV_TILE_HEIGHT: %d\n", g_ggml_sycl_gemv_tile_height);
+        GGML_LOG_INFO("  GGML_SYCL_GEMV_REORDER_FORMAT: %d\n", g_ggml_sycl_gemv_reorder_format);
         GGML_LOG_INFO("Build with Macros:\n");
 #if defined(GGML_SYCL_FORCE_MMQ)
         GGML_LOG_INFO("  GGML_SYCL_FORCE_MMQ: yes\n");
@@ -3095,11 +3098,6 @@ static void reorder_qw_q4_0(uint8_t * data_device, const int ncols, const int nr
     sycl::free(tmp_buf, *stream);
 }
 
-enum class reorder_kind_t {
-    BLOCKS = 0,
-    LINEAR = 1,
-    INTERLEAVED_WEIGHTS = 2,
-};
 
 template <reorder_kind_t reorder_kind>
 static void reorder_qw_q4_k(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream);
@@ -3216,16 +3214,16 @@ void reorder_qw_q4_k<reorder_kind_t::LINEAR>(uint8_t * data_device, size_t size,
 
         dm_ptr[ib] = x[ib].dm;
 
-        // if (ib == 0) {
+        // if (ib == 1) {
         //     print("");
         //     auto range = QK_K / 2;
-        //     for (size_t j = 0; j < range; j++) {
-        //         auto offset = (j / 32) * 64 + j % 32;
-        //         print("unordered[]:", offset, x[ib].qs[j] & 0x0F, offset + 32, (x[ib].qs[j] >> 4) & 0x0F);
-        //     }
+        //     // for (size_t j = 0; j < range; j++) {
+        //     //     auto offset = (j / 32) * 64 + j % 32;
+        //     //     print("unordered[]:", offset, x[ib].qs[j] & 0x0F, offset + 32, (x[ib].qs[j] >> 4) & 0x0F);
+        //     // }
         //     for (size_t j = 0; j < range; j++) {
         //         uint8_t q = qs_ptr[ib * (QK_K / 2) + j];
-        //         print("reordered[", j, "]:", 2 * j + 1, q & 0x0F, 2 * j, (q >> 4) & 0x0F);
+        //         print("reordered[", j, "]:", 2 * j, 2 * j + 1, (q >> 4) & 0x0F, q & 0x0F);
         //     }
         // }
 
@@ -3234,6 +3232,113 @@ void reorder_qw_q4_k<reorder_kind_t::LINEAR>(uint8_t * data_device, size_t size,
         //     print("unordered[]:", x[ib].scales[0], x[ib].scales[1], x[ib].scales[2], x[ib].scales[3], ",", x[ib].scales[4], x[ib].scales[5], x[ib].scales[6], x[ib].scales[7], ",", x[ib].scales[8], x[ib].scales[9], x[ib].scales[10], x[ib].scales[11]);
         //     uint8_t* scales = &scales_ptr[ib * K_SCALE_SIZE];
         //     print("reordered[]:", scales[0], scales[1], scales[2], scales[3], ",", scales[4], scales[5], scales[6], scales[7], ",", scales[8], scales[9], scales[10], scales[11]);
+        // }
+
+    }).wait_and_throw();
+
+
+    sycl::free(tmp_buf, *stream);
+}
+
+template<>
+void reorder_qw_q4_k<reorder_kind_t::LINEAR_BLOCK_LOAD>(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
+    GGML_ASSERT(size % sizeof(block_q4_K) == 0);
+    GGML_ASSERT(offset % sizeof(block_q4_K) == 0);
+
+    const int nblocks = size / sizeof(block_q4_K);
+
+    auto * tmp_buf = sycl::malloc_shared<uint8_t>(size, *stream);
+    SYCL_CHECK(CHECK_TRY_ERROR((*stream).memcpy(tmp_buf, data_device, size).wait()));
+
+    auto * qs_ptr     = data_device;
+    auto * scales_ptr = qs_ptr + QK_K / 2 * nblocks;
+    auto * dm_ptr     = (sycl::half2 *) (scales_ptr + K_SCALE_SIZE * nblocks);
+
+
+    stream->parallel_for(nblocks, [=](auto i) {
+        block_q4_K * x  = (block_q4_K *) tmp_buf;
+        const int          ib = i;
+        const size_t block_offset = ib * (QK_K / 2);
+
+        auto repack_q4_K = [=](int from, int to_1, int to_2){
+            // Assuming mem is aligned
+            const uint16_t* qs_u16 = reinterpret_cast<const uint16_t *>(x[ib].qs + from);
+            const uint8_t* qs_pair = reinterpret_cast<const uint8_t *>(qs_u16);
+
+            // Extract low nibbles (0, 1, ..., 64, 65, ...)
+            const uint8_t q0l = qs_pair[0] & 0x0F;
+            const uint8_t q1l = qs_pair[1] & 0x0F;
+
+            // Extract high nibbles (32, 33, ..., 96, 97, ...)
+            const uint8_t q0h = (qs_pair[0] >> 4) & 0x0F;
+            const uint8_t q1h = (qs_pair[1] >> 4) & 0x0F;
+
+            // if (ib==0) {
+            //     print("  - ", from, " = ", (qs_pair[0] >> 4) & 0x0F, qs_pair[0] & 0x0F);
+            //     print("  - ", from + 1, " = ", (qs_pair[1] >> 4) & 0x0F, qs_pair[1] & 0x0F);
+            // }
+
+            qs_ptr[block_offset + to_1] = (q0l << 4) | q1l;
+            qs_ptr[block_offset + to_2] = (q0h << 4) | q1h;
+
+        //     auto q = qs_ptr[block_offset + to_1];
+        //     if (ib==0) {
+        //         print("  - [", to_1, "]:", (q >> 4) & 0x0F, q & 0x0F);
+        //     }
+        //     q = qs_ptr[block_offset + to_2];
+        //     if (ib==0) {
+        //         print("  - [", to_2, "]:", (q >> 4) & 0x0F, q & 0x0F);
+        //     }
+
+        };
+
+        for (int chunk = 0; chunk < QK_K / (2 * QK8_1); chunk++) {
+            int from_offset = chunk * QK8_1;
+            int to_offset = chunk * 8;
+
+#pragma unroll
+            for (int logical_index = 0; logical_index < 4; logical_index++) {
+                int from = from_offset + logical_index * 4;
+                int to_1 = to_offset + logical_index * QK8_1;
+                int to_2 = to_1 + 4;
+                repack_q4_K(from, to_1, to_2);
+                repack_q4_K(from + 2, to_1 + 1, to_2 + 1);
+            }
+
+#pragma unroll
+            for (int logical_index = 0; logical_index < 4; logical_index++) {
+                int from = from_offset + logical_index * 4 + 16;
+                int to_1 = to_offset + logical_index * QK8_1 + 2;
+                int to_2 = to_1 + 4;
+                repack_q4_K(from, to_1, to_2);
+                repack_q4_K(from + 2, to_1 + 1, to_2 + 1);
+            }
+        }
+
+#pragma unroll
+        for (int j = 0; j < (K_SCALE_SIZE - 4); ++j) {
+            if (j < 4) {
+                scales_ptr[ib * K_SCALE_SIZE + (2 * j)]     = x[ib].scales[j];
+                scales_ptr[ib * K_SCALE_SIZE + (2 * j) + 1] = x[ib].scales[j + 4];
+            } else {
+                scales_ptr[ib * K_SCALE_SIZE + j + 4] = x[ib].scales[j + 4];
+            }
+        }
+
+        dm_ptr[ib] = x[ib].dm;
+
+        // if (ib == 1) {
+        //     print("");
+        //     auto range = QK_K / 2;
+        //     for (size_t j = 0; j < range; j++) {
+        //         int qindex_1 = (j / 32) * 64 + j % 32;
+        //         int qindex_2 = qindex_1 + 32;
+        //         print("unordered[]:", qindex_1, qindex_2, x[ib].qs[j] & 0x0F, (x[ib].qs[j] >> 4) & 0x0F);
+        //     }
+        //     for (size_t j = 0; j < range; j++) {
+        //         uint8_t q = qs_ptr[ib * (QK_K / 2) + j];
+        //         print("reordered[", j, "]:", (q >> 4) & 0x0F, q & 0x0F);
+        //     }
         // }
 
     }).wait_and_throw();
@@ -3337,7 +3442,14 @@ static void reorder_qw(const ggml_tensor * src0, dpct::queue_ptr stream) {
             if (g_ggml_sycl_prioritize_mmvq) {
                 reorder_qw_q4_k<reorder_kind_t::BLOCKS>(data_device, size, 0, stream);
             } else {
-                reorder_qw_q4_k<reorder_kind_t::LINEAR>(data_device, size, 0, stream);
+                reorder_kind_t reorder_format = static_cast<reorder_kind_t>(g_ggml_sycl_gemv_reorder_format);
+                if (reorder_format == reorder_kind_t::LINEAR) {
+                    reorder_qw_q4_k<reorder_kind_t::LINEAR>(data_device, size, 0, stream);
+                } else if (reorder_format == reorder_kind_t::LINEAR_BLOCK_LOAD) {
+                    reorder_qw_q4_k<reorder_kind_t::LINEAR_BLOCK_LOAD>(data_device, size, 0, stream);
+                } else {
+                    GGML_ABORT("UNSUPPORTED GEMV REORDER IN Q4_K:", reorder_format);
+                }
             }
             break;
         case GGML_TYPE_Q6_K:
