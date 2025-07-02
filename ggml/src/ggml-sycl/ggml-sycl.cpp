@@ -45,6 +45,39 @@
 #include "ggml-sycl/getrows.hpp"
 #include "ggml.h"
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wgnu-anonymous-struct"
+#pragma clang diagnostic ignored "-Wnested-anon-types"
+#pragma clang diagnostic ignored "-Wsign-compare"
+#pragma clang diagnostic ignored "-Wmissing-noreturn"
+#pragma clang diagnostic ignored "-Wunused-variable"
+#pragma clang diagnostic ignored "-Wcast-qual"
+#pragma clang diagnostic ignored "-Wunused-local-typedef"
+
+#include <cute/util/print.hpp>
+
+#pragma clang diagnostic pop
+
+template <typename... T> void print(const char * format, const T &... t) {
+    cute::print("Idx: (");
+    cute::print(syclcompat::local_id::x());
+    cute::print(",");
+    cute::print(syclcompat::work_group_id::x());
+    cute::print(")");
+    cute::print(format);
+    cute::print(" ");
+    ((cute::print(t), cute::print(" ")), ...);
+    cute::print("\n");
+}
+
+template <typename... T> void print(const int i, const char * format, const T &... t) {
+    if (syclcompat::local_id::x() == i) {
+        print(format, t...);
+    }
+}
+
 static bool g_sycl_loaded = false;
 int g_ggml_sycl_debug = 0;
 int g_ggml_sycl_disable_optimize = 0;
@@ -1446,7 +1479,94 @@ static void quantize_q8_1(const float * __restrict__ x, void * __restrict__ vy, 
 
 template <int ElementsPerWI>
 static __dpct_inline__ void quantize_and_reorder_q8_1(const float * __restrict__ x, void * reordered_q8_tensor,
-                                                      const int kx, const int kx_padded, const sycl::nd_item<1> & it) {
+                                                      const int kx, const int kx_padded, const sycl::nd_item<1> & it, std::integral_constant<reorder_kind_t, reorder_kind_t::LINEAR_BLOCK_LOAD>) {
+    auto subgroup_id = it.get_group(0);
+    auto wi_id       = it.get_local_id(0);
+
+    const int num_blocks_per_row   = kx        / QK8_1;
+    auto      row                  = subgroup_id / num_blocks_per_row;
+    auto      col                  = subgroup_id % num_blocks_per_row;
+
+    auto row_offset = row * (kx_padded / QK8_1) * sizeof(block_q8_1);
+    auto col_offset = QK8_1 * col + wi_id * ElementsPerWI;
+
+    auto ds_ptr    = (sycl::half2 *) ((char *) reordered_q8_tensor + row_offset + kx + col * sizeof(sycl::half2));
+
+    sycl::vec<float, ElementsPerWI>  wi_f32_vals;
+    sycl::vec<int8_t, ElementsPerWI> quantized_values;
+
+    auto float_ptr_offset = subgroup_id * QK8_1 + ElementsPerWI * wi_id;
+    wi_f32_vals           = *reinterpret_cast<const sycl::vec<float, ElementsPerWI> *>(x + float_ptr_offset);
+
+    float sum  = 0.0f;
+    float amax = 0.0f;
+
+#pragma unroll(ElementsPerWI)
+    for (int i = 0; i < ElementsPerWI; i++) {
+        sum += wi_f32_vals[i];
+        amax                = sycl::fmax(amax, sycl::fabs(wi_f32_vals[i]));
+        quantized_values[i] = 0;
+    }
+    sum     = sycl::reduce_over_group(it.get_sub_group(), sum, sycl::plus<float>());
+    amax    = sycl::reduce_over_group(it.get_sub_group(), amax, sycl::maximum<float>());
+    float d = amax == 0 ? 1 : amax / 127;
+
+#pragma unroll(ElementsPerWI)
+    for (int i = 0; i < ElementsPerWI; i++) {
+        quantized_values[i] = sycl::round(wi_f32_vals[i] / d);
+    }
+
+    d = amax == 0 ? 0 : d;
+
+    // *reinterpret_cast<sycl::vec<int8_t, ElementsPerWI> *>(quant_ptr) = quantized_values;
+//          for (int chunk = 0; chunk < QK_K / (2 * QK8_1); chunk++) {
+//             int from_offset = chunk * QK8_1;
+//             int to_offset = chunk * 8;
+//
+//             for (int logical_index = 0; logical_index < 4; logical_index++) {
+//                 int from = from_offset + logical_index * 4;
+//                 int to_1 = to_offset + logical_index * QK8_1;
+//                 int to_2 = to_1 + 4;
+//                 repack_q4_K(from, to_1, to_2);
+//                 repack_q4_K(from + 2, to_1 + 1, to_2 + 1);
+//             }
+//
+// #pragma unroll
+//             for (int logical_index = 0; logical_index < 4; logical_index++) {
+//                 int from = from_offset + logical_index * 4 + 16;
+//                 int to_1 = to_offset + logical_index * QK8_1 + 2;
+//                 int to_2 = to_1 + 4;
+//                 repack_q4_K(from, to_1, to_2);
+//                 repack_q4_K(from + 2, to_1 + 1, to_2 + 1);
+//             }
+//         }
+
+    const int super_blocks_per_row = kx_padded / QK_K;
+    auto sblock_offset = ((QK8_1 * subgroup_id) / QK_K) * QK_K;
+    auto quant_ptr = (int8_t *) ((char *) reordered_q8_tensor + row_offset + sblock_offset);
+
+
+    constexpr auto block_load_width = WARP_SIZE * sizeof(int);
+    // (subgroup_id % (QK_K / QK8_1))            -> Starting destination for subgroup
+    // (WARP_SIZE * ElementsPerWI) / sizeof(int) -> number of loads per wi in a superblock
+    auto sg_offset = (subgroup_id % (QK_K / QK8_1)) * (WARP_SIZE * ElementsPerWI) / sizeof(int);
+    // (subgroup_id / 8) -> Which half of the subgroup I am
+    // sizeof(int)       -> Number of values required for dp4a
+    // (block_load_width * (wi_id / 2)) % QK_K -> Offset to ensure block loads load contiguous data.
+    // ElementsPerWI * (wi_id % 2)   -> WI location the designed block
+    auto chunk_offset =
+        (wi_id / 8) * sizeof(int) + (block_load_width * (wi_id / 2)) % QK_K + ElementsPerWI * (wi_id % 2);
+
+    *reinterpret_cast<sycl::vec<int8_t, ElementsPerWI> *>(quant_ptr + sg_offset + chunk_offset) = quantized_values;
+
+    if (wi_id == 0) {
+        *ds_ptr = sycl::half2(sycl::half(d), sycl::half(sum));
+    }
+}
+
+template <int ElementsPerWI>
+static __dpct_inline__ void quantize_and_reorder_q8_1(const float * __restrict__ x, void * reordered_q8_tensor,
+                                                      const int kx, const int kx_padded, const sycl::nd_item<1> & it, std::integral_constant<reorder_kind_t, reorder_kind_t::LINEAR>) {
     /*
         Quantizes and reorders the resultant q8 tensor in a per row fashion
         Each sub-group calculates one quant block. i.e. QK8_1 quant values and the d and sum values
@@ -1480,8 +1600,8 @@ static __dpct_inline__ void quantize_and_reorder_q8_1(const float * __restrict__
         amax                = sycl::fmax(amax, sycl::fabs(wi_f32_vals[i]));
         quantized_values[i] = 0;
     }
-    sum     = sycl::reduce_over_group(it.get_group(), sum, sycl::plus<float>());
-    amax    = sycl::reduce_over_group(it.get_group(), amax, sycl::maximum<float>());
+    sum     = sycl::reduce_over_group(it.get_sub_group(), sum, sycl::plus<float>());
+    amax    = sycl::reduce_over_group(it.get_sub_group(), amax, sycl::maximum<float>());
     float d = amax == 0 ? 1 : amax / 127;
 
 #pragma unroll(ElementsPerWI)
@@ -1787,10 +1907,21 @@ static void quantize_row_q8_1_sycl(const float * x, void * vy, const int kx, con
         auto local_range      = std::size_t(WARP_SIZE);
         auto num_quant_blocks = ky * (kx / QK8_1);
         auto global_range     = num_quant_blocks * local_range;
-        stream->parallel_for(sycl::nd_range<1>({ global_range }, { local_range }),
-                             [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                 quantize_and_reorder_q8_1<QK8_1 / WARP_SIZE>(x, vy, kx, kx_padded, it);
-                             });
+
+        reorder_kind_t reorder_format = static_cast<reorder_kind_t>(g_ggml_sycl_gemv_reorder_format);
+        if (reorder_format == reorder_kind_t::LINEAR_BLOCK_LOAD) {
+            std::cout << "LINEAR_BLOCK_LOAD_REORDER" <<std::endl;
+            stream->parallel_for(sycl::nd_range<1>({ global_range }, { local_range }),
+                                 [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                                     quantize_and_reorder_q8_1<QK8_1 / WARP_SIZE>(x, vy, kx, kx_padded, it, std::integral_constant<reorder_kind_t, reorder_kind_t::LINEAR_BLOCK_LOAD>{});
+                                 });
+        } else {
+            std::cout << "LINEAR" <<std::endl;
+            stream->parallel_for(sycl::nd_range<1>({ global_range }, { local_range }),
+                                 [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                                     quantize_and_reorder_q8_1<QK8_1 / WARP_SIZE>(x, vy, kx, kx_padded, it, std::integral_constant<reorder_kind_t, reorder_kind_t::LINEAR>{});
+                                 });
+        }
     } else {
         const int            block_num_x = (kx_padded + SYCL_QUANTIZE_BLOCK_SIZE - 1) / SYCL_QUANTIZE_BLOCK_SIZE;
         const sycl::range<3> num_blocks(1, ky, block_num_x);
@@ -3134,31 +3265,6 @@ void reorder_qw_q4_k<reorder_kind_t::BLOCKS>(uint8_t * data_device, size_t size,
     sycl::free(tmp_buf, *stream);
 }
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
-#pragma clang diagnostic ignored "-Wunused-parameter"
-#pragma clang diagnostic ignored "-Wgnu-anonymous-struct"
-#pragma clang diagnostic ignored "-Wnested-anon-types"
-#pragma clang diagnostic ignored "-Wsign-compare"
-#pragma clang diagnostic ignored "-Wmissing-noreturn"
-#pragma clang diagnostic ignored "-Wunused-variable"
-#pragma clang diagnostic ignored "-Wcast-qual"
-#pragma clang diagnostic ignored "-Wunused-local-typedef"
-
-#include <cute/util/print.hpp>
-
-#pragma clang diagnostic pop
-
-template <typename... T> void print(const char * format, const T &... t) {
-    cute::print("Idx: ");
-    cute::print(syclcompat::local_id::x());
-    cute::print(" ");
-    cute::print(format);
-    cute::print(" ");
-    ((cute::print(t), cute::print(" ")), ...);
-    cute::print("\n");
-}
-
 template <>
 void reorder_qw_q4_k<reorder_kind_t::LINEAR>(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
     GGML_ASSERT(size % sizeof(block_q4_K) == 0);
@@ -3448,7 +3554,7 @@ static void reorder_qw(const ggml_tensor * src0, dpct::queue_ptr stream) {
                 } else if (reorder_format == reorder_kind_t::LINEAR_BLOCK_LOAD) {
                     reorder_qw_q4_k<reorder_kind_t::LINEAR_BLOCK_LOAD>(data_device, size, 0, stream);
                 } else {
-                    GGML_ABORT("UNSUPPORTED GEMV REORDER IN Q4_K:", reorder_format);
+                    GGML_ABORT("UNSUPPORTED GEMV REORDER IN Q4_K: %d", (int)reorder_format);
                 }
             }
             break;
