@@ -72,7 +72,7 @@ template <typename... T> void print(const char * format, const T &... t) {
     cute::print("\n");
 }
 
-template <typename... T> void print(const int i, const char * format, const T &... t) {
+template <typename... T> void print(const size_t i, const char * format, const T &... t) {
     if (syclcompat::local_id::x() == i) {
         print(format, t...);
     }
@@ -1488,7 +1488,6 @@ static __dpct_inline__ void quantize_and_reorder_q8_1(const float * __restrict__
     auto      col                  = subgroup_id % num_blocks_per_row;
 
     auto row_offset = row * (kx_padded / QK8_1) * sizeof(block_q8_1);
-    auto col_offset = QK8_1 * col + wi_id * ElementsPerWI;
 
     auto ds_ptr    = (sycl::half2 *) ((char *) reordered_q8_tensor + row_offset + kx + col * sizeof(sycl::half2));
 
@@ -1518,34 +1517,11 @@ static __dpct_inline__ void quantize_and_reorder_q8_1(const float * __restrict__
 
     d = amax == 0 ? 0 : d;
 
-    // *reinterpret_cast<sycl::vec<int8_t, ElementsPerWI> *>(quant_ptr) = quantized_values;
-//          for (int chunk = 0; chunk < QK_K / (2 * QK8_1); chunk++) {
-//             int from_offset = chunk * QK8_1;
-//             int to_offset = chunk * 8;
-//
-//             for (int logical_index = 0; logical_index < 4; logical_index++) {
-//                 int from = from_offset + logical_index * 4;
-//                 int to_1 = to_offset + logical_index * QK8_1;
-//                 int to_2 = to_1 + 4;
-//                 repack_q4_K(from, to_1, to_2);
-//                 repack_q4_K(from + 2, to_1 + 1, to_2 + 1);
-//             }
-//
-// #pragma unroll
-//             for (int logical_index = 0; logical_index < 4; logical_index++) {
-//                 int from = from_offset + logical_index * 4 + 16;
-//                 int to_1 = to_offset + logical_index * QK8_1 + 2;
-//                 int to_2 = to_1 + 4;
-//                 repack_q4_K(from, to_1, to_2);
-//                 repack_q4_K(from + 2, to_1 + 1, to_2 + 1);
-//             }
-//         }
-
-    const int super_blocks_per_row = kx_padded / QK_K;
     auto sblock_offset = ((QK8_1 * subgroup_id) / QK_K) * QK_K;
     auto quant_ptr = (int8_t *) ((char *) reordered_q8_tensor + row_offset + sblock_offset);
 
 
+    // Reorder offsets to get per blockload interleave (values are 16 ints apart inside each superblock)
     constexpr auto block_load_width = WARP_SIZE * sizeof(int);
     // (subgroup_id % (QK_K / QK8_1))            -> Starting destination for subgroup
     // (WARP_SIZE * ElementsPerWI) / sizeof(int) -> number of loads per wi in a superblock
@@ -1910,13 +1886,11 @@ static void quantize_row_q8_1_sycl(const float * x, void * vy, const int kx, con
 
         reorder_kind_t reorder_format = static_cast<reorder_kind_t>(g_ggml_sycl_gemv_reorder_format);
         if (reorder_format == reorder_kind_t::LINEAR_BLOCK_LOAD) {
-            std::cout << "LINEAR_BLOCK_LOAD_REORDER" <<std::endl;
             stream->parallel_for(sycl::nd_range<1>({ global_range }, { local_range }),
                                  [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
                                      quantize_and_reorder_q8_1<QK8_1 / WARP_SIZE>(x, vy, kx, kx_padded, it, std::integral_constant<reorder_kind_t, reorder_kind_t::LINEAR_BLOCK_LOAD>{});
                                  });
         } else {
-            std::cout << "LINEAR" <<std::endl;
             stream->parallel_for(sycl::nd_range<1>({ global_range }, { local_range }),
                                  [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
                                      quantize_and_reorder_q8_1<QK8_1 / WARP_SIZE>(x, vy, kx, kx_padded, it, std::integral_constant<reorder_kind_t, reorder_kind_t::LINEAR>{});
