@@ -1,9 +1,27 @@
-#ifndef GGML_SYCL_BUILTINS_HPP
-#define GGML_SYCL_BUILTINS_HPP
+/***************************************************************************
+ *
+ *  Copyright (C) 2025 Codeplay Software Ltd.
+ *  Copyright (C) 2025 Intel Corporation
+ *
+ *  MIT License
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ *  builtins.hpp
+ *
+ *  Description:
+ *     Intel builtin specifics
+ **************************************************************************/
+
+#pragma once
 
 #include <sycl/marray.hpp>
 
-#include "cacheopts.hpp"
+#include "ggml-sycl/dpct/helper.hpp"
 
 #define GGML_SYCL_UNREACHABLE(x) \
     assert(0 && x);              \
@@ -30,33 +48,113 @@ template <class T, int N> using vector_t = sycl::marray<T, N>;
 #    define SYCL_DEVICE_OCL(x)
 #endif
 
-using uint32 = vector_t<uint, 32>;
-using uint16 = vector_t<uint, 16>;
-using uint8  = vector_t<uint, 8>;
-using uint2  = vector_t<uint, 2>;
+namespace sycl::vector_types {
 
-using short16  = vector_t<short, 16>;
-using uint8_32 = vector_t<uint8_t, 32>;
+using ushort2  = vector_t<uint16_t, 2>;
+using ushort4  = vector_t<uint16_t, 4>;
+using ushort8  = vector_t<uint16_t, 8>;
+using ushort16 = vector_t<uint16_t, 16>;
 
-// loads
-SYCL_DEVICE_BUILTIN(uint16 __builtin_IB_subgroup_block_read_flat_u32_m16k16v1(intptr_t baseoffset, int width_minus_one,
-                                                                              int height_minus_one, int pitch_minus_one,
-                                                                              uint2 coord));
+using uint16_t2  = vector_t<uint16_t, 2>;
+using uint16_t4  = vector_t<uint16_t, 4>;
+using uint16_t8  = vector_t<uint16_t, 8>;
+using uint16_t16 = vector_t<uint16_t, 16>;
 
+using uint32_t2  = vector_t<uint32_t, 2>;
+using uint32_t8  = vector_t<uint32_t, 8>;
+using uint32_t16 = vector_t<uint32_t, 16>;
+using uint32_t32 = vector_t<uint32_t, 32>;
 
-//stores
-SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_write_flat_u32_m1k16v1(intptr_t baseoffset, int width_minus_one,
-                                                                            int height_minus_one, int pitch_minus_one,
-                                                                            uint2 coord, uint2 data));
+using int32_t2 = vector_t<int32_t, 2>;
+}  // namespace sycl::vector_types
 
-// prefetches
-SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_read_prefetch_u32_m16k16v1(
-    intptr_t baseoffset, int width_minus_one, int height_minus_one, int pitch_minus_one, uint2 coord,
-    LSC_LDCC cache_control));
+using coord_t = sycl::vector_types::int32_t2;
 
-SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_read_prefetch_u32_m1k16v1(intptr_t baseoffset, int width_minus_one,
+namespace sycl::detail {
+
+// To avoid compilation issues in the host side, these have to be declared
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wreturn-type"
+
+SYCL_DEVICE_BUILTIN(uint16_t __builtin_IB_subgroup_block_read_flat_u16_m1k16v1(intptr_t baseoffset, int width_minus_one,
                                                                                int height_minus_one,
-                                                                               int pitch_minus_one, uint2 coord,
-                                                                               LSC_LDCC cache_control));
+                                                                               int pitch_minus_one, coord_t coord));
+SYCL_DEVICE_BUILTIN(sycl::vector_types::ushort2 __builtin_IB_subgroup_block_read_flat_u16_m2k16v1(
+    intptr_t baseoffset, int width_minus_one, int height_minus_one, int pitch_minus_one, coord_t coord));
+SYCL_DEVICE_BUILTIN(sycl::vector_types::ushort4 __builtin_IB_subgroup_block_read_flat_u16_m4k16v1(
+    intptr_t baseoffset, int width_minus_one, int height_minus_one, int pitch_minus_one, coord_t coord));
+SYCL_DEVICE_BUILTIN(sycl::vector_types::ushort8 __builtin_IB_subgroup_block_read_flat_u16_m8k16v1(
+    intptr_t baseoffset, int width_minus_one, int height_minus_one, int pitch_minus_one, coord_t coord));
+SYCL_DEVICE_BUILTIN(sycl::vector_types::ushort16 __builtin_IB_subgroup_block_read_flat_u16_m16k16v1(
+    intptr_t baseoffset, int width_minus_one, int height_minus_one, int pitch_minus_one, coord_t coord));
+SYCL_DEVICE_BUILTIN(uint32_t __builtin_IB_subgroup_block_read_flat_u32_m1k16v1(
+    intptr_t baseoffset, int width_minus_one, int height_minus_one, int pitch_minus_one, coord_t coord));
 
-#endif
+SYCL_EXTERNAL extern "C" int __builtin_IB_dp4a_ss(int c, int a, int b) __attribute__((const));
+
+#pragma clang diagnostic pop
+
+template <int ElementSize, int BlockWidth, int BlockHeight, int BlockCount> struct XeSubgroup2DBlockLoad {
+    static_assert(false, "Unsupported 2D Block Load Configuration.");
+};
+
+template <> struct XeSubgroup2DBlockLoad<2, 16, 1, 1> {
+    template <typename T>
+    __dpct_inline__ void operator()(const void * srcBasePointer, int memoryWidth, int memoryHeight, int memoryPitch,
+                                    coord_t coordinate, T * dstPointer) {
+        *reinterpret_cast<uint16_t *>(dstPointer) = __builtin_IB_subgroup_block_read_flat_u16_m1k16v1(
+            (intptr_t) (srcBasePointer), memoryWidth - 1, memoryHeight - 1, memoryPitch - 1, coordinate);
+    }
+};
+
+template <> struct XeSubgroup2DBlockLoad<2, 16, 2, 1> {
+    template <typename T>
+    __dpct_inline__ void operator()(const void * srcBasePointer, int memoryWidth, int memoryHeight, int memoryPitch,
+                                    coord_t coordinate, T * dstPointer) {
+        *reinterpret_cast<sycl::vector_types::ushort2 *>(dstPointer) =
+            __builtin_IB_subgroup_block_read_flat_u16_m2k16v1((intptr_t) (srcBasePointer), memoryWidth - 1,
+                                                              memoryHeight - 1, memoryPitch - 1, coordinate);
+    }
+};
+
+template <> struct XeSubgroup2DBlockLoad<2, 16, 4, 1> {
+    template <typename T>
+    __dpct_inline__ void operator()(const void * srcBasePointer, int memoryWidth, int memoryHeight, int memoryPitch,
+                                    coord_t coordinate, T * dstPointer) {
+        *reinterpret_cast<sycl::vector_types::ushort4 *>(dstPointer) =
+            __builtin_IB_subgroup_block_read_flat_u16_m4k16v1((intptr_t) (srcBasePointer), memoryWidth - 1,
+                                                              memoryHeight - 1, memoryPitch - 1, coordinate);
+    }
+};
+
+template <> struct XeSubgroup2DBlockLoad<2, 16, 8, 1> {
+    template <typename T>
+    __dpct_inline__ void operator()(const void * srcBasePointer, int memoryWidth, int memoryHeight, int memoryPitch,
+                                    coord_t coordinate, T * dstPointer) {
+        *reinterpret_cast<sycl::vector_types::ushort8 *>(dstPointer) =
+            __builtin_IB_subgroup_block_read_flat_u16_m8k16v1((intptr_t) (srcBasePointer), memoryWidth - 1,
+                                                              memoryHeight - 1, memoryPitch - 1, coordinate);
+    }
+};
+
+template <> struct XeSubgroup2DBlockLoad<2, 16, 16, 1> {
+    template <typename T>
+    __dpct_inline__ void operator()(const void * srcBasePointer, int memoryWidth, int memoryHeight, int memoryPitch,
+                                    coord_t coordinate, T * dstPointer) {
+        *reinterpret_cast<sycl::vector_types::ushort16 *>(dstPointer) =
+            __builtin_IB_subgroup_block_read_flat_u16_m16k16v1((intptr_t) (srcBasePointer), memoryWidth - 1,
+                                                               memoryHeight - 1, memoryPitch - 1, coordinate);
+    }
+};
+
+template <> struct XeSubgroup2DBlockLoad<4, 16, 1, 1> {
+    template <typename T>
+    __dpct_inline__ void operator()(const void * srcBasePointer, int memoryWidth, int memoryHeight, int memoryPitch,
+                                    coord_t coordinate, T * dstPointer) {
+        *reinterpret_cast<uint32_t *>(dstPointer) = __builtin_IB_subgroup_block_read_flat_u32_m1k16v1(
+            reinterpret_cast<long>(srcBasePointer), memoryWidth - 1, memoryHeight - 1, memoryPitch - 1, coordinate);
+    }
+};
+
+}  // namespace sycl::detail
