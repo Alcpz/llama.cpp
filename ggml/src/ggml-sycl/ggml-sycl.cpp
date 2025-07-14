@@ -1668,104 +1668,6 @@ static  void pool2d_nchw_kernel(
         o_ptr[cur_oh * ow + cur_ow] = res;
 }
 
-template <int ElementsPerWI>
-__dpct_inline__ void quantize_and_reorder_q8_1_linear(const float * __restrict__ x, void * reordered_q8_tensor,
-                                                      const int kx, const int kx_padded, const sycl::nd_item<1> & it) {
-    auto subgroup_id = it.get_group(0);
-    auto wi_id       = it.get_local_id(0);
-
-    const int num_blocks_per_row = kx / QK8_1;
-    auto      row                = subgroup_id / num_blocks_per_row;
-    auto      col                = subgroup_id % num_blocks_per_row;
-
-    auto row_offset = row * (kx_padded / QK8_1) * sizeof(block_q8_1);
-
-    auto ds_ptr = (sycl::half2 *) ((char *) reordered_q8_tensor + row_offset + kx + col * sizeof(sycl::half2));
-
-    sycl::vec<float, ElementsPerWI>  wi_f32_vals;
-    sycl::vec<int8_t, ElementsPerWI> quantized_values;
-
-    auto float_ptr_offset = subgroup_id * QK8_1 + ElementsPerWI * wi_id;
-    wi_f32_vals           = *reinterpret_cast<const sycl::vec<float, ElementsPerWI> *>(x + float_ptr_offset);
-
-    float sum  = 0.0f;
-    float amax = 0.0f;
-
-#pragma unroll(ElementsPerWI)
-    for (int i = 0; i < ElementsPerWI; i++) {
-        sum += wi_f32_vals[i];
-        amax                = sycl::fmax(amax, sycl::fabs(wi_f32_vals[i]));
-        quantized_values[i] = 0;
-    }
-    sum     = sycl::reduce_over_group(it.get_sub_group(), sum, sycl::plus<float>());
-    amax    = sycl::reduce_over_group(it.get_sub_group(), amax, sycl::maximum<float>());
-    float d = amax == 0 ? 1 : amax / 127;
-
-#pragma unroll(ElementsPerWI)
-    for (int i = 0; i < ElementsPerWI; i++) {
-        quantized_values[i] = sycl::round(wi_f32_vals[i] / d);
-    }
-
-    d = amax == 0 ? 0 : d;
-
-    auto sblock_offset = ((QK8_1 * subgroup_id) / QK_K) * QK_K;
-    auto quant_ptr     = (int8_t *) ((char *) reordered_q8_tensor + row_offset + sblock_offset);
-
-    // Reorder offsets to get per blockload interleave (values are 16 ints apart inside each superblock)
-    constexpr auto block_load_width = WARP_SIZE * sizeof(int);
-    // (subgroup_id % (QK_K / QK8_1))            -> Starting destination for subgroup
-    // (WARP_SIZE * ElementsPerWI) / sizeof(int) -> number of loads per wi in a superblock
-    auto           sg_offset        = (subgroup_id % (QK_K / QK8_1)) * (WARP_SIZE * ElementsPerWI) / sizeof(int);
-    // (subgroup_id / 8) -> Which half of the subgroup I am
-    // sizeof(int)       -> Number of values required for dp4a
-    // (block_load_width * (wi_id / 2)) % QK_K -> Offset to ensure block loads load contiguous data.
-    // ElementsPerWI * (wi_id % 2)   -> WI location the designed block
-    auto           chunk_offset =
-        (wi_id / 8) * sizeof(int) + (block_load_width * (wi_id / 2)) % QK_K + ElementsPerWI * (wi_id % 2);
-
-    *reinterpret_cast<sycl::vec<int8_t, ElementsPerWI> *>(quant_ptr + sg_offset + chunk_offset) = quantized_values;
-
-    if (wi_id == 0) {
-        *ds_ptr = sycl::half2(sycl::half(d), sycl::half(sum));
-    }
-}
-
-
-
-static void quantize_row_q8_1_sycl(const float * x, void * vy, const int kx, const int ky, const int kx_padded,
-                                   bool reorder_q8_tensor, queue_ptr stream) {
-    if (reorder_q8_tensor) {
-        auto local_range      = std::size_t(WARP_SIZE);
-        auto num_quant_blocks = ky * (kx / QK8_1);
-        auto global_range     = num_quant_blocks * local_range;
-
-        // if (reorder_format == reorder_kind_t::LINEAR_BLOCK_LOAD) {
-            stream->parallel_for(sycl::nd_range<1>({ global_range }, { local_range }),
-                                 [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                                     quantize_and_reorder_q8_1_linear<QK8_1 / WARP_SIZE>(x, vy, kx, kx_padded, it);
-                                 });
-        // } else {
-            // stream->parallel_for(sycl::nd_range<1>({ global_range }, { local_range }),
-            //                      [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-            //                          quantize_and_reorder_q8_1_soa<QK8_1 / WARP_SIZE>(x, vy, kx, kx_padded, it);
-            //                      });
-        // }
-    } else {
-        const int            block_num_x = (kx_padded + SYCL_QUANTIZE_BLOCK_SIZE - 1) / SYCL_QUANTIZE_BLOCK_SIZE;
-        const sycl::range<3> num_blocks(1, ky, block_num_x);
-        int constexpr QUANT_BLOCK_TILE = QK8_1 / WARP_SIZE;
-        static_assert(QK8_1 % WARP_SIZE == 0);
-        const sycl::range<3> block_size(1, 1, SYCL_QUANTIZE_BLOCK_SIZE / QUANT_BLOCK_TILE);
-        {
-            dpct::has_capability_or_fail(stream->get_device(), { sycl::aspect::fp16 });
-
-            // stream->parallel_for(sycl::nd_range<3>(num_blocks * block_size, block_size),
-            //                      [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-            //                          quantize_q8_1<QUANT_BLOCK_TILE>(x, vy, kx, kx_padded, item_ct1);
-            //                      });
-        }
-    }
-}
 
 static void ggml_mul_mat_p021_f16_f32_sycl(const void *vx, const float *y,
                                            float *dst, const int ncols_x,
@@ -2348,10 +2250,10 @@ static void ggml_sycl_set_peer_access(const int n_tokens, int main_device) {
     peer_access_enabled = enable_peer_access;
 }
 
+template <template <int> typename quantize_f = no_quantize_q8_1>
 static void ggml_sycl_op_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor *src0,
                                  const ggml_tensor *src1, ggml_tensor *dst,
-                                 ggml_sycl_op_mul_mat_t op,
-                                 const bool convert_src1_to_q8_1) try {
+                                 ggml_sycl_op_mul_mat_t op) try {
 
     GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne);
 
@@ -2446,6 +2348,8 @@ static void ggml_sycl_op_mul_mat(ggml_backend_sycl_context & ctx, const ggml_ten
         }
     }
 
+    constexpr bool quantize_enabled = !std::is_same_v<quantize_f<QK8_1 / WARP_SIZE>,
+                                                      no_quantize_q8_1<QK8_1 / WARP_SIZE>>;
     for (int i = 0; i < ggml_sycl_info().device_count; ++i) {
         if ((!split && i != ctx.device) || dev[i].row_low == dev[i].row_high) {
             continue;
@@ -2471,20 +2375,21 @@ static void ggml_sycl_op_mul_mat(ggml_backend_sycl_context & ctx, const ggml_ten
             dev[i].src1_ddf = dev[i].src1_ddf_alloc.alloc(ctx.pool(i), ggml_nelements(src1));
         }
 
-        if (convert_src1_to_q8_1) {
+        if constexpr(quantize_enabled) {
             dev[i].src1_ddq = dev[i].src1_ddq_alloc.alloc(ctx.pool(i), nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs);
 
             if (src1_on_device && src1_is_contiguous) {
-                bool reorder_q8_tensor = src0->extra && ((ggml_tensor_extra_gpu *)src0->extra)->optimized_feature.reorder;
                 scope_op_debug_print scope_dbg_print(__func__, "/quantize_row_q8_1_sycl", dst,
                                                      /*num_src=*/2, " : converting src1 to Q8_1");
-                quantize_row_q8_1_sycl(dev[i].src1_ddf, dev[i].src1_ddq, ne10, nrows1, src1_padded_col_size, reorder_q8_tensor, stream);
-                /*
-                DPCT1010:90: SYCL uses exceptions to report errors and does not
-                use the error codes. The call was replaced with 0. You need to
-                rewrite this code.
-                */
-                SYCL_CHECK(0);
+                try {
+                    bool reorder_q8_tensor = src0->extra && ((ggml_tensor_extra_gpu *)src0->extra)->optimized_feature.reorder;
+                    std::cout << "PEPE " << reorder_q8_tensor << std::endl;
+                    quantize_row_q8_1_sycl<quantize_f>(dev[i].src1_ddf, dev[i].src1_ddq, ne10, nrows1, src1_padded_col_size, stream);
+                } catch (sycl::exception const &exc) {
+                    std::cerr << "Quantize_row_q8_1_sycl error" << exc.what() << "Exception caught at file:" << __FILE__
+                              << ", line:" << __LINE__ << std::endl;
+                    std::exit(1);
+                }
             }
         }
 
@@ -2558,7 +2463,7 @@ static void ggml_sycl_op_mul_mat(ggml_backend_sycl_context & ctx, const ggml_ten
                 // copy src0, src1 to device if necessary
                 if (src1_is_contiguous) {
                     if (i != ctx.device) {
-                        if (convert_src1_to_q8_1) {
+                        if constexpr(quantize_enabled) {
                             char * src1_ddq_i_source = dev[ctx.device].src1_ddq + src1_ddq_i_offset;
                           SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(
                                 src1_ddq_i, src1_ddq_i_source,
@@ -2581,16 +2486,18 @@ static void ggml_sycl_op_mul_mat(ggml_backend_sycl_context & ctx, const ggml_ten
                     GGML_ABORT("fatal error");
                 }
 
-                if (convert_src1_to_q8_1 && !src1_is_contiguous) {
-                    scope_op_debug_print scope_dbg_print(__func__, "/quantize_row_q8_1_sycl", dst,
-                                                         /*num_src=*/2, " : converting src1 to Q8_1");
-                    quantize_row_q8_1_sycl(src1_ddf_i, src1_ddq_i, ne10, src1_ncols, src1_padded_col_size, false, stream);
-                    /*
-                    DPCT1010:92: SYCL uses exceptions to report errors and does
-                    not use the error codes. The call was replaced with 0. You
-                    need to rewrite this code.
-                    */
-                    SYCL_CHECK(0);
+                if constexpr(quantize_enabled) {
+                    if (!src1_is_contiguous) {
+                        scope_op_debug_print scope_dbg_print(__func__, "/quantize_row_q8_1_sycl", dst,
+                                                             /*num_src=*/2, " : converting src1 to Q8_1");
+                        try {
+                            quantize_row_q8_1_sycl<quantize_q8_1>(src1_ddf_i, src1_ddq_i, ne10, src1_ncols, src1_padded_col_size, stream);
+                        } catch (sycl::exception const &exc) {
+                            std::cerr << "Quantize_row_q8_1_sycl error" << exc.what() << "Exception caught at file:" << __FILE__
+                                      << ", line:" << __LINE__ << std::endl;
+                            std::exit(1);
+                        }
+                    }
                 }
 
                 if (src1_col_0 == 0 && !src0_is_contiguous && i02 % i02_divisor == 0) {
@@ -2616,7 +2523,7 @@ static void ggml_sycl_op_mul_mat(ggml_backend_sycl_context & ctx, const ggml_ten
                         // src0 = weight matrix is saved as a transposed matrix for better memory layout.
                         // dst is NOT transposed.
                         // The outputs of matrix matrix multiplications can therefore NOT simply be concatenated for >1 GPU.
-                        // Instead they need to be copied to the correct slice in ne0 = dst row index.
+                        // Instead they need to be copied to th]be correct slice in ne0 = dst row index.
                         // If dst is a vector with ne0 == 1 then you don't have to do this but it still produces correct results.
                         float * dhf_dst_i = (float *) ((char *) dst_off_device + i02*nb2 + i03*nb3);
                         GGML_ASSERT(dst->nb[1] == ne0*sizeof(float));
@@ -2975,7 +2882,7 @@ inline bool ggml_sycl_supports_reorder_mul_mat_sycl(enum ggml_type type) {
     }
 }
 
-inline bool ggml_sycl_supports_reorder_cute(enum ggml_type type) {
+inline bool ggml_sycl_supports_reorder_exp_gemvq(enum ggml_type type) {
     switch (type) {
         // case GGML_TYPE_Q4_0:
         case GGML_TYPE_Q4_K:
@@ -3263,7 +3170,7 @@ static void opt_for_reorder(ggml_backend_sycl_context * ctx, const ggml_tensor *
 
     switch (mm_algorithm) {
         case mul_mat_algo::EXP_GEMVQ:
-            if (!ggml_sycl_supports_reorder_cute(src0->type)) {
+            if (!ggml_sycl_supports_reorder_exp_gemvq(src0->type)) {
                 GGML_ABORT("experimental gemv only supported on reordered kernels");
             }
             break;
@@ -3371,23 +3278,31 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
         // KQ + KQV multi-batch
         ggml_sycl_mul_mat_batched_sycl(ctx, src0, src1, dst);
     } else if (use_mul_mat_vec_exp_gemvq) {
-        constexpr bool convert_src1_to_q8_1 = true;
+        std::cout << "gemvq" << std::endl;
         opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::EXP_GEMVQ);
-        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_exp_gemvq, convert_src1_to_q8_1);
+        ggml_tensor_extra_gpu * extra = static_cast<ggml_tensor_extra_gpu *>(src0->extra);
+        if (extra && extra->optimized_feature.reorder) {
+            ggml_sycl_op_mul_mat<quantize_and_reorder_q8_1_linear>(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_exp_gemvq);
+        } else {
+            GGML_ABORT("Exp GemvQ requires GGML_SYCL_DISABLE_OPT=0");
+        }
     } else if (use_dequantize_mul_mat_vec) {
-        constexpr bool convert_src1_to_q8_1 = false;
+        std::cout << "dmmv" << std::endl;
         opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::DMMV);
-        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_dequantize_mul_mat_vec, convert_src1_to_q8_1);
+        ggml_sycl_op_mul_mat<quantize_q8_1>(ctx, src0, src1, dst, ggml_sycl_op_dequantize_mul_mat_vec);
     } else if (use_mul_mat_vec_q) {
-        constexpr bool convert_src1_to_q8_1 = true;
+        std::cout << "mmvq" << std::endl;
         opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::MMVQ);
-        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_q, convert_src1_to_q8_1);
+        ggml_tensor_extra_gpu * extra = static_cast<ggml_tensor_extra_gpu *>(src0->extra);
+        if (extra && extra->optimized_feature.reorder) {
+            ggml_sycl_op_mul_mat<quantize_and_reorder_q8_1_soa>(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_q);
+        } else {
+            ggml_sycl_op_mul_mat<quantize_q8_1>(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_q);
+        }
     } else if (use_mul_mat_q) {
-        constexpr bool convert_src1_to_q8_1 = true;
-        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_q, convert_src1_to_q8_1);
+        ggml_sycl_op_mul_mat<quantize_q8_1>(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_q);
     } else {
-        constexpr bool convert_src1_to_q8_1 = false;
-        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_sycl, convert_src1_to_q8_1);
+        ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_sycl);
     }
 }
 
