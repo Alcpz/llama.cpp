@@ -13,6 +13,7 @@
 #ifndef GGML_SYCL_VECDOTQ_HPP
 #define GGML_SYCL_VECDOTQ_HPP
 
+#include <syclcompat.hpp>
 #include "dpct/helper.hpp"
 #include "ggml.h"
 #include "quants.hpp"
@@ -390,6 +391,13 @@ template <> struct reorder_vec_dot_q_sycl<GGML_TYPE_Q4_K> {
             const int * q8 = (const int *) quant_base_ptr + ((iqs / 2) % 4);
             u[2 * i + 0]   = q8[0];
             u[2 * i + 1]   = q8[4];
+        }
+
+        if (syclcompat::global_id::x() > 239 && syclcompat::global_id::x() < 256) {
+            const uint8_t* q48 = reinterpret_cast<const uint8_t*>(q4);
+            const sycl::float2 dmsf =
+               dms->convert<float, sycl::rounding_mode::automatic>();
+            sycl::ext::oneapi::experimental::printf("u %d %d %d %d q4 %d %d %d %d, %d %d %d %d d8 %.4f %.4f dms %.4f\n", u[0], u[1], u[2], u[3], q48[0], q48[1], q48[2], q48[3], q48[4], q48[5], q48[6], q48[7], d8[0], d8[1], dmsf.x());
         }
 
         return vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, *dms, d8);

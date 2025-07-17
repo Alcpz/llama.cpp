@@ -2382,8 +2382,6 @@ static void ggml_sycl_op_mul_mat(ggml_backend_sycl_context & ctx, const ggml_ten
                 scope_op_debug_print scope_dbg_print(__func__, "/quantize_row_q8_1_sycl", dst,
                                                      /*num_src=*/2, " : converting src1 to Q8_1");
                 try {
-                    bool reorder_q8_tensor = src0->extra && ((ggml_tensor_extra_gpu *)src0->extra)->optimized_feature.reorder;
-                    std::cout << "PEPE " << reorder_q8_tensor << std::endl;
                     quantize_row_q8_1_sycl<quantize_f>(dev[i].src1_ddf, dev[i].src1_ddq, ne10, nrows1, src1_padded_col_size, stream);
                 } catch (sycl::exception const &exc) {
                     std::cerr << "Quantize_row_q8_1_sycl error" << exc.what() << "Exception caught at file:" << __FILE__
@@ -2523,7 +2521,7 @@ static void ggml_sycl_op_mul_mat(ggml_backend_sycl_context & ctx, const ggml_ten
                         // src0 = weight matrix is saved as a transposed matrix for better memory layout.
                         // dst is NOT transposed.
                         // The outputs of matrix matrix multiplications can therefore NOT simply be concatenated for >1 GPU.
-                        // Instead they need to be copied to th]be correct slice in ne0 = dst row index.
+                        // Instead they need to be copied to the correct slice in ne0 = dst row index.
                         // If dst is a vector with ne0 == 1 then you don't have to do this but it still produces correct results.
                         float * dhf_dst_i = (float *) ((char *) dst_off_device + i02*nb2 + i03*nb3);
                         GGML_ASSERT(dst->nb[1] == ne0*sizeof(float));
@@ -2993,6 +2991,7 @@ void reorder_qw_q4_k<reorder_kind_t::SOA>(uint8_t * data_device, size_t size, si
     }).wait_and_throw();
 
     sycl::free(tmp_buf, *stream);
+
 }
 
 // Intel intrinsics for block loads perform strided loads depending on the subgroup size.
@@ -3135,10 +3134,11 @@ static void reorder_qw(const ggml_tensor * src0, dpct::queue_ptr stream) {
             reorder_qw_q4_0(data_device, ncols, nrows, size, 0, stream);
             break;
         case GGML_TYPE_Q4_K:
-            if (g_ggml_sycl_use_exp_gemvq) {
-                reorder_qw_q4_k<reorder_kind_t::LINEAR_BLOCK_LOAD>(data_device, size, 0, stream);
-            } else {
+            printf("g_ggml_sycl_use_exp_gemvq %d\n", g_ggml_sycl_use_exp_gemvq);
+            if (!g_ggml_sycl_use_exp_gemvq) {
                 reorder_qw_q4_k<reorder_kind_t::SOA>(data_device, size, 0, stream);
+            } else {
+                reorder_qw_q4_k<reorder_kind_t::LINEAR_BLOCK_LOAD>(data_device, size, 0, stream);
             }
             break;
         case GGML_TYPE_Q6_K:
@@ -3259,6 +3259,7 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
 
     if (!g_ggml_sycl_use_exp_gemvq)
         use_mul_mat_vec_exp_gemvq = 0;
+    use_dequantize_mul_mat_vec = 0;
 
     if (!split && src0->type == GGML_TYPE_F16 && ggml_is_permuted(src0) && ggml_is_permuted(src1) && src1->ne[1] == 1) {
         // TODO: Refactor and cleanup of mul mat dispatching.
@@ -3291,12 +3292,13 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
         opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::DMMV);
         ggml_sycl_op_mul_mat<quantize_q8_1>(ctx, src0, src1, dst, ggml_sycl_op_dequantize_mul_mat_vec);
     } else if (use_mul_mat_vec_q) {
-        std::cout << "mmvq" << std::endl;
         opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::MMVQ);
         ggml_tensor_extra_gpu * extra = static_cast<ggml_tensor_extra_gpu *>(src0->extra);
         if (extra && extra->optimized_feature.reorder) {
+            std::cout << "mmvq q8_1 soa" << std::endl;
             ggml_sycl_op_mul_mat<quantize_and_reorder_q8_1_soa>(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_q);
         } else {
+            std::cout << "mmvq" << std::endl;
             ggml_sycl_op_mul_mat<quantize_q8_1>(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_q);
         }
     } else if (use_mul_mat_q) {
