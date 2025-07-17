@@ -127,15 +127,11 @@ __dpct_inline__ void operator()(const float * __restrict__ x, void * reordered_q
 }};
 
 
+// TODO: N > 1
 template <int ElementsPerWI>
 struct quantize_q8_1 {
 __dpct_inline__ void operator()(const float * __restrict__ x, void * q8_tensor,
                                 const int /* kx */, const int /* kx_padded */, const sycl::nd_item<1> & it) const{
-    /*
-        Quantizes and reorders the resultant q8 tensor in a per row fashion
-        Each sub-group calculates one quant block. i.e. QK8_1 quant values and the d and sum values
-    */
-
     auto subgroup_id = it.get_group(0);
     auto wi_id       = it.get_local_id(0);
 

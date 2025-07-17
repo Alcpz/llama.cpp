@@ -11,20 +11,6 @@ static void mul_mat_vec_q_reorder(const void * __restrict__ vx, const void * __r
     using block_type   = ggml_sycl_reordered::block_q_t<reorder_vec_dot_q_sycl::gtype>;
     using block_traits = typename block_type::traits;
 
-
-    // int32_t* ptr_a = const_cast<int32_t *>(reinterpret_cast<const int32_t*>(vx));
-    // int32_t* wtr_b = const_cast<int32_t *>(reinterpret_cast<const int32_t*>(vy));
-    // if (cute::thread(0)) {
-    //     for (size_t i = 0; i < ncols / 4; i++) {
-    //         if (i > (256 / 4)) {
-    //             ptr_a[i] = i;
-    //         } else {
-    //             ptr_a[i] = i;
-    //             wtr_b[i] = i;
-    //         }
-    //     }
-    // }
-
     const auto sg           = nd_item.get_sub_group();
     const int  sg_range     = sg.get_group_linear_range();
     const int  workgroup_id = nd_item.get_group_linear_id();
@@ -56,23 +42,12 @@ static void mul_mat_vec_q_reorder(const void * __restrict__ vx, const void * __r
         const int8_t* q8_1_quant_ptr = (const int8_t*)vy + iby * QK8_1;
         const sycl::half2* q8_1_ds_ptr = (const sycl::half2*)((const char*)vy + ncols + iby * sizeof(sycl::half2));
 
-        if (syclcompat::global_id::x() > -1 && syclcompat::global_id::x() < 16) {
-            sycl::ext::oneapi::experimental::printf("sgid %d, %d, %zu, %zu\n", syclcompat::global_id::x(), ibx, bx_offset, d_offset);
-        }
-        if (syclcompat::global_id::x() > 239 && syclcompat::global_id::x() < 256) {
-            sycl::ext::oneapi::experimental::printf("sgid %d, %d, %zu, %zu\n", syclcompat::global_id::x(), ibx, bx_offset, d_offset);
-        }
-
 #pragma unroll
         for (int elem = 0; elem < block_elements_per_subgroup; elem += WARP_SIZE) {
             // x block quant index when casting the quants to int
             const int iqs = elem + block_traits::vdr_mmvq * (sg.get_local_linear_id() % block_elements_per_subgroup);
 
             partial_sum += reorder_vec_dot_q_sycl()(vx, bx_offset, d_offset, q8_1_quant_ptr, q8_1_ds_ptr, iqs);
-        }
-
-        if (syclcompat::global_id::x() > 239 && syclcompat::global_id::x() < 256) {
-            sycl::ext::oneapi::experimental::printf("sgid %d, %.8f\n", syclcompat::global_id::x(), partial_sum);
         }
     }
 
@@ -81,31 +56,7 @@ static void mul_mat_vec_q_reorder(const void * __restrict__ vx, const void * __r
 
     if (sg.leader()) {
         dst[row] = sum;
-        sycl::ext::oneapi::experimental::printf("row %d %.8f \n", row, dst[row]);
     }
-
-    const int8_t* ptr = reinterpret_cast<const int8_t*>(vy);
-    const int8_t* wtr = reinterpret_cast<const int8_t*>(vx);
-    auto gid = nd_item.get_global_linear_id();
-    if (gid == 0) {
-        for (auto i = 0; i < nrows * ncols / 2; i++) {
-            sycl::ext::oneapi::experimental::printf("%4d ", wtr[i]);
-            if (i % 16 == 15) sycl::ext::oneapi::experimental::printf("\n");
-            if (i % 128 == 127) sycl::ext::oneapi::experimental::printf("\n");
-        }
-        // sycl::ext::oneapi::experimental::printf("\n");
-        for (auto i = 0; i < ncols; i++) {
-            // sycl::ext::oneapi::experimental::printf("%4d ", ptr[i]);
-            // if (i % 16 == 15)sycl::ext::oneapi::experimental::printf("\n");
-        }
-        // sycl::ext::oneapi::experimental::printf("\n");
-        for (auto i = 0; i < ((ncols / QK8_1) * 4); i++) {
-            // sycl::ext::oneapi::experimental::printf("%4d ", ptr[ncols + i]);
-            // if (i % 16 == 15)sycl::ext::oneapi::experimental::printf("\n");
-        }
-        sycl::ext::oneapi::experimental::printf("\n");
-    }
-
 }
 
 template <int qk, int qi, typename block_q_t, int vdr, vec_dot_q_sycl_t vec_dot_q_sycl>
