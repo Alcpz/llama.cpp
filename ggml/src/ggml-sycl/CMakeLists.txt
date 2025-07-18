@@ -114,7 +114,6 @@ if (GGML_SYCL_TARGET STREQUAL "INTEL")
     if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         set(SYCL_COMPILER ON)
     endif()
-
     find_package(MKL REQUIRED)
     target_link_libraries(ggml-sycl PRIVATE MKL::MKL_SYCL::BLAS)
     target_compile_definitions(ggml-sycl PRIVATE GGML_SYCL_USE_INTEL_ONEMKL)

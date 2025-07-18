@@ -17,7 +17,6 @@
 #include <utility>
 
 #include "ggml-common.h"
-#include "ggml-sycl/common.hpp"
 #include "ggml.h"
 
 namespace ggml_sycl_reordered {

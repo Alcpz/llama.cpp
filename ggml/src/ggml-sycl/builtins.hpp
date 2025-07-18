@@ -72,7 +72,8 @@ using coord_t = sycl::vector_types::int32_t2;
 
 namespace sycl::detail {
 
-// To avoid compilation issues in the host side, these have to be declared
+// Avoid compilation warnings in the host side
+// These are expected to be unused
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-parameter"
 #pragma clang diagnostic ignored "-Wreturn-type"

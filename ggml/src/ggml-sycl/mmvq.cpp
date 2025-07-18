@@ -30,8 +30,6 @@ static void mul_mat_vec_q_reorder(const void * __restrict__ vx, const void * __r
     static_assert(block_elements_per_subgroup > 0);
 
     float partial_sum = 0.0f;
-
-
     for (int i = sg.get_local_linear_id() / block_elements_per_subgroup; i < blocks_per_row; i += blocks_per_subgroup) {
         const int ibx = row * blocks_per_row + i;  // x block index
 
@@ -52,7 +50,6 @@ static void mul_mat_vec_q_reorder(const void * __restrict__ vx, const void * __r
     }
 
     auto sum = sycl::reduce_over_group(nd_item.get_sub_group(), partial_sum, std::plus<>());
-
 
     if (sg.leader()) {
         dst[row] = sum;
@@ -759,7 +756,7 @@ static void reorder_mul_mat_vec_q4_k_q8_1_sycl(const void * vx, const void * vy,
                                 mul_mat_vec_q_reorder<reorder_vec_dot_q_sycl<GGML_TYPE_Q4_K>>(vx, vy, dst, ncols,
                                                                                             nrows, nd_item);
                             });
-    }).wait();
+    });
 }
 
 

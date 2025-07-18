@@ -47,7 +47,6 @@
 #include "ggml-sycl/quantize.hpp"
 #include "ggml.h"
 
-
 static bool g_sycl_loaded = false;
 int g_ggml_sycl_debug = 0;
 int g_ggml_sycl_disable_optimize = 0;
@@ -3076,7 +3075,6 @@ void reorder_qw_q4_k<reorder_kind_t::LINEAR_BLOCK_LOAD>(uint8_t * data_device, s
     sycl::free(tmp_buf, *stream);
 }
 
-
 static void reorder_qw_q6_k(uint8_t * data_device, size_t size, size_t offset, dpct::queue_ptr stream) {
     GGML_ASSERT(size % sizeof(block_q6_K) == 0);
     GGML_ASSERT(offset % sizeof(block_q6_K) == 0);
@@ -3121,13 +3119,11 @@ static void reorder_qw_q6_k(uint8_t * data_device, size_t size, size_t offset, d
     sycl::free(tmp_buf, *stream);
 }
 
-
 static void reorder_qw(const ggml_tensor * src0, dpct::queue_ptr stream) {
     uint8_t * data_device = (uint8_t *) src0->data;
     size_t ncols = src0->ne[0];
     size_t nrows = src0->ne[1];
     size_t size = ggml_nbytes(src0);
-
 
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
@@ -3241,7 +3237,7 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
     use_mul_mat_q = use_mul_mat_q && (src0->type != GGML_TYPE_IQ2_XXS);
 #ifdef SYCL_USE_XMX
     use_mul_mat_q = use_mul_mat_q && (src1->ne[1] <= MMQ_MAX_BATCH_SIZE);
-#endif  // SYCL_USE_XMX
+#endif // SYCL_USE_XMX
 
     bool use_mul_mat_vec_exp_gemvq = ggml_sycl_supports_exp_gemvq(src0->type) && src1->type == GGML_TYPE_F32 &&
                                      dst->type == GGML_TYPE_F32 && src0->ne[2] == 1 && src0->ne[3] == 1 &&
@@ -3273,8 +3269,7 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
     } else if (!split && src0->type == GGML_TYPE_F16 && !ggml_is_contiguous(src0) && ggml_is_contiguous(src1) && !ggml_is_transposed(src1) && src1->ne[1] == 1) {
         // KQV single-batch
         ggml_sycl_mul_mat_vec_nc(ctx, src0, src1, dst);
-    } else if (!split && src0->type == GGML_TYPE_F16 && !ggml_is_transposed(src0) && !ggml_is_transposed(src1) &&
-               src1->ne[2] * src1->ne[3] > 1) {
+    } else if (!split && src0->type == GGML_TYPE_F16 && !ggml_is_transposed(src0) && !ggml_is_transposed(src1) && src1->ne[2] * src1->ne[3] > 1) {
         // KQ + KQV multi-batch
         ggml_sycl_mul_mat_batched_sycl(ctx, src0, src1, dst);
     } else if (use_mul_mat_vec_exp_gemvq) {

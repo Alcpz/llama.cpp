@@ -13,7 +13,6 @@
 #ifndef GGML_SYCL_VECDOTQ_HPP
 #define GGML_SYCL_VECDOTQ_HPP
 
-#include <syclcompat.hpp>
 #include "dpct/helper.hpp"
 #include "ggml.h"
 #include "quants.hpp"
