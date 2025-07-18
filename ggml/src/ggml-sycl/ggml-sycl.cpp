@@ -3134,7 +3134,6 @@ static void reorder_qw(const ggml_tensor * src0, dpct::queue_ptr stream) {
             reorder_qw_q4_0(data_device, ncols, nrows, size, 0, stream);
             break;
         case GGML_TYPE_Q4_K:
-            printf("g_ggml_sycl_use_exp_gemvq %d\n", g_ggml_sycl_use_exp_gemvq);
             if (!g_ggml_sycl_use_exp_gemvq) {
                 reorder_qw_q4_k<reorder_kind_t::SOA>(data_device, size, 0, stream);
             } else {
@@ -3244,6 +3243,10 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
     use_mul_mat_q = use_mul_mat_q && (src1->ne[1] <= MMQ_MAX_BATCH_SIZE);
 #endif  // SYCL_USE_XMX
 
+    bool use_mul_mat_vec_exp_gemvq = ggml_sycl_supports_exp_gemvq(src0->type) && src1->type == GGML_TYPE_F32 &&
+                                     dst->type == GGML_TYPE_F32 && src0->ne[2] == 1 && src0->ne[3] == 1 &&
+                                     src1->ne[1] == 1 && src1->ne[2] == 1 && src1->ne[3] == 1;
+
     // mmvq path is faster in the CUDA backend.
     if (!g_ggml_sycl_prioritize_dmmv && (ctx.stream()->get_backend() == sycl::backend::ext_oneapi_cuda
         // Dispatch becomes obscure with the reorder, MMVQ when the reorder optimization
@@ -3253,12 +3256,9 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
         use_dequantize_mul_mat_vec = use_dequantize_mul_mat_vec && !use_mul_mat_vec_q;
     }
 
-    bool use_mul_mat_vec_exp_gemvq = ggml_sycl_supports_exp_gemvq(src0->type) && src1->type == GGML_TYPE_F32 &&
-                                dst->type == GGML_TYPE_F32 && src0->ne[2] == 1 && src0->ne[3] == 1 &&
-                                src1->ne[1] == 1 && src1->ne[2] == 1 && src1->ne[3] == 1;
-
-    if (!g_ggml_sycl_use_exp_gemvq)
+    if (!g_ggml_sycl_use_exp_gemvq || ctx.stream()->get_backend() == sycl::backend::ext_oneapi_cuda) {
         use_mul_mat_vec_exp_gemvq = 0;
+    }
 
     if (!split && src0->type == GGML_TYPE_F16 && ggml_is_permuted(src0) && ggml_is_permuted(src1) && src1->ne[1] == 1) {
         // TODO: Refactor and cleanup of mul mat dispatching.
@@ -3278,7 +3278,6 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
         // KQ + KQV multi-batch
         ggml_sycl_mul_mat_batched_sycl(ctx, src0, src1, dst);
     } else if (use_mul_mat_vec_exp_gemvq) {
-        std::cout << "gemvq" << std::endl;
         opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::EXP_GEMVQ);
         ggml_tensor_extra_gpu * extra = static_cast<ggml_tensor_extra_gpu *>(src0->extra);
         if (extra && extra->optimized_feature.reorder) {
@@ -3287,17 +3286,14 @@ static void ggml_sycl_mul_mat(ggml_backend_sycl_context & ctx, const ggml_tensor
             GGML_ABORT("Exp GemvQ requires GGML_SYCL_DISABLE_OPT=0");
         }
     } else if (use_dequantize_mul_mat_vec) {
-        std::cout << "dmmv" << std::endl;
         opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::DMMV);
         ggml_sycl_op_mul_mat(ctx, src0, src1, dst, ggml_sycl_op_dequantize_mul_mat_vec);
     } else if (use_mul_mat_vec_q) {
         opt_for_reorder(&ctx, src0, src1, dst, mul_mat_algo::MMVQ);
         ggml_tensor_extra_gpu * extra = static_cast<ggml_tensor_extra_gpu *>(src0->extra);
         if (extra && extra->optimized_feature.reorder) {
-            std::cout << "mmvq q8_1 soa" << std::endl;
             ggml_sycl_op_mul_mat<quantize_and_reorder_q8_1_soa>(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_q);
         } else {
-            std::cout << "mmvq" << std::endl;
             ggml_sycl_op_mul_mat<quantize_q8_1>(ctx, src0, src1, dst, ggml_sycl_op_mul_mat_vec_q);
         }
     } else if (use_mul_mat_q) {

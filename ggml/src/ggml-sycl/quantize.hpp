@@ -126,27 +126,31 @@ __dpct_inline__ void operator()(const float * __restrict__ x, void * reordered_q
     }
 }};
 
-
-// TODO: N > 1
 template <int ElementsPerWI>
 struct quantize_q8_1 {
-__dpct_inline__ void operator()(const float * __restrict__ x, void * q8_tensor,
-                                const int /* kx */, const int /* kx_padded */, const sycl::nd_item<1> & it) const{
-    auto subgroup_id = it.get_group(0);
-    auto wi_id       = it.get_local_id(0);
+    __dpct_inline__ void operator()(const float * __restrict__ x, void * q8_tensor, const int kx, const int kx_padded,
+                                    const sycl::nd_item<1> & it) const {
+        auto subgroup_id = it.get_group(0);
+        auto wi_id       = it.get_local_id(0);
 
-    sycl::vec<int8_t, ElementsPerWI> quantized_values;
-    float d = 0.0f;
-    float sum  = 0.0f;
-    quantize_q8_1_impl<ElementsPerWI>(x, quantized_values, d, sum, it);
+        const int num_blocks_per_row = kx / QK8_1;
+        auto      row                = subgroup_id / num_blocks_per_row;
+        const int pitch              = kx_padded / QK8_1;
 
-    block_q8_1 * quant_ptr = (block_q8_1 *) q8_tensor;
-    int8_t* qs = &(quant_ptr[subgroup_id].qs[wi_id * ElementsPerWI]);
-    *reinterpret_cast<sycl::vec<int8_t, ElementsPerWI> *>(qs) = quantized_values;
-    if (wi_id == 0) {
-        quant_ptr[subgroup_id].ds = sycl::half2(sycl::half(d), sycl::half(sum));
+        sycl::vec<int8_t, ElementsPerWI> quantized_values;
+        float                            d   = 0.0f;
+        float                            sum = 0.0f;
+        quantize_q8_1_impl<ElementsPerWI>(x, quantized_values, d, sum, it);
+
+        block_q8_1 * quant_ptr = (block_q8_1 *) q8_tensor;
+        auto         block_id  = subgroup_id % num_blocks_per_row + row * pitch;
+
+        int8_t * qs                                               = &(quant_ptr[block_id].qs[wi_id * ElementsPerWI]);
+        *reinterpret_cast<sycl::vec<int8_t, ElementsPerWI> *>(qs) = quantized_values;
+        if (wi_id == 0) {
+            quant_ptr[block_id].ds = sycl::half2(sycl::half(d), sycl::half(sum));
+        }
     }
-}
 };
 
 template <template<int> typename quantize_f>
