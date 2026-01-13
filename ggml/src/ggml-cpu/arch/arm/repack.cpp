@@ -808,8 +808,8 @@ void ggml_gemv_q5_K_8x8_q8_K(int                        n,
 #if defined(__aarch64__) && defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
     constexpr int    col_pairs = ncols_interleaved / 2;
     const uint8x16_t m4b       = vdupq_n_u8(0x0f);
-    const uint8x16_t mone = vdupq_n_u8(1);
-    const uint8x16_t mtwo = vdupq_n_u8(2);
+    const uint8x16_t mone      = vdupq_n_u8(1);
+    const uint8x16_t mtwo      = vdupq_n_u8(2);
 
     // 1x8 tile = 2 x 4
     float32x4_t acc_f32[ncols_interleaved / 4];
@@ -902,14 +902,22 @@ void ggml_gemv_q5_K_8x8_q8_K(int                        n,
                     qh[0][2] = vshrq_n_u8(qh[0][2], 2);
                     qh[0][3] = vshrq_n_u8(qh[0][3], 2);
 
-                    acc_lo[0] = ggml_vdotq_s32(acc_lo[0], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_0, m4b), hbit_lo_0)), q8_qs[0]);
-                    acc_lo[0] = ggml_vdotq_s32(acc_lo[0], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_1, m4b), hbit_lo_1)), q8_qs[1]);
-                    acc_lo[0] = ggml_vdotq_s32(acc_lo[0], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_2, m4b), hbit_lo_2)), q8_qs[2]);
-                    acc_lo[0] = ggml_vdotq_s32(acc_lo[0], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_3, m4b), hbit_lo_3)), q8_qs[3]);
-                    acc_hi[0] = ggml_vdotq_s32(acc_hi[0], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_0, 4), hbit_hi_0)), q8_qs[4]);
-                    acc_hi[0] = ggml_vdotq_s32(acc_hi[0], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_1, 4), hbit_hi_1)), q8_qs[5]);
-                    acc_hi[0] = ggml_vdotq_s32(acc_hi[0], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_2, 4), hbit_hi_2)), q8_qs[6]);
-                    acc_hi[0] = ggml_vdotq_s32(acc_hi[0], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_3, 4), hbit_hi_3)), q8_qs[7]);
+                    acc_lo[0] = ggml_vdotq_s32(acc_lo[0], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_0, m4b), hbit_lo_0)),
+                                               q8_qs[0]);
+                    acc_lo[0] = ggml_vdotq_s32(acc_lo[0], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_1, m4b), hbit_lo_1)),
+                                               q8_qs[1]);
+                    acc_lo[0] = ggml_vdotq_s32(acc_lo[0], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_2, m4b), hbit_lo_2)),
+                                               q8_qs[2]);
+                    acc_lo[0] = ggml_vdotq_s32(acc_lo[0], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_3, m4b), hbit_lo_3)),
+                                               q8_qs[3]);
+                    acc_hi[0] = ggml_vdotq_s32(acc_hi[0], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_0, 4), hbit_hi_0)),
+                                               q8_qs[4]);
+                    acc_hi[0] = ggml_vdotq_s32(acc_hi[0], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_1, 4), hbit_hi_1)),
+                                               q8_qs[5]);
+                    acc_hi[0] = ggml_vdotq_s32(acc_hi[0], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_2, 4), hbit_hi_2)),
+                                               q8_qs[6]);
+                    acc_hi[0] = ggml_vdotq_s32(acc_hi[0], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_3, 4), hbit_hi_3)),
+                                               q8_qs[7]);
 
                     // Cols 23
                     qs_0 = vld1q_u8(qs_base + 16);
@@ -931,14 +939,22 @@ void ggml_gemv_q5_K_8x8_q8_K(int                        n,
                     qh[1][2] = vshrq_n_u8(qh[1][2], 2);
                     qh[1][3] = vshrq_n_u8(qh[1][3], 2);
 
-                    acc_lo[1] = ggml_vdotq_s32(acc_lo[1], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_0, m4b), hbit_lo_0)), q8_qs[0]);
-                    acc_lo[1] = ggml_vdotq_s32(acc_lo[1], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_1, m4b), hbit_lo_1)), q8_qs[1]);
-                    acc_lo[1] = ggml_vdotq_s32(acc_lo[1], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_2, m4b), hbit_lo_2)), q8_qs[2]);
-                    acc_lo[1] = ggml_vdotq_s32(acc_lo[1], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_3, m4b), hbit_lo_3)), q8_qs[3]);
-                    acc_hi[1] = ggml_vdotq_s32(acc_hi[1], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_0, 4), hbit_hi_0)), q8_qs[4]);
-                    acc_hi[1] = ggml_vdotq_s32(acc_hi[1], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_1, 4), hbit_hi_1)), q8_qs[5]);
-                    acc_hi[1] = ggml_vdotq_s32(acc_hi[1], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_2, 4), hbit_hi_2)), q8_qs[6]);
-                    acc_hi[1] = ggml_vdotq_s32(acc_hi[1], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_3, 4), hbit_hi_3)), q8_qs[7]);
+                    acc_lo[1] = ggml_vdotq_s32(acc_lo[1], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_0, m4b), hbit_lo_0)),
+                                               q8_qs[0]);
+                    acc_lo[1] = ggml_vdotq_s32(acc_lo[1], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_1, m4b), hbit_lo_1)),
+                                               q8_qs[1]);
+                    acc_lo[1] = ggml_vdotq_s32(acc_lo[1], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_2, m4b), hbit_lo_2)),
+                                               q8_qs[2]);
+                    acc_lo[1] = ggml_vdotq_s32(acc_lo[1], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_3, m4b), hbit_lo_3)),
+                                               q8_qs[3]);
+                    acc_hi[1] = ggml_vdotq_s32(acc_hi[1], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_0, 4), hbit_hi_0)),
+                                               q8_qs[4]);
+                    acc_hi[1] = ggml_vdotq_s32(acc_hi[1], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_1, 4), hbit_hi_1)),
+                                               q8_qs[5]);
+                    acc_hi[1] = ggml_vdotq_s32(acc_hi[1], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_2, 4), hbit_hi_2)),
+                                               q8_qs[6]);
+                    acc_hi[1] = ggml_vdotq_s32(acc_hi[1], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_3, 4), hbit_hi_3)),
+                                               q8_qs[7]);
 
                     // Cols 45
                     qs_0 = vld1q_u8(qs_base + 32);
@@ -960,14 +976,22 @@ void ggml_gemv_q5_K_8x8_q8_K(int                        n,
                     qh[2][2] = vshrq_n_u8(qh[2][2], 2);
                     qh[2][3] = vshrq_n_u8(qh[2][3], 2);
 
-                    acc_lo[2] = ggml_vdotq_s32(acc_lo[2], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_0, m4b), hbit_lo_0)), q8_qs[0]);
-                    acc_lo[2] = ggml_vdotq_s32(acc_lo[2], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_1, m4b), hbit_lo_1)), q8_qs[1]);
-                    acc_lo[2] = ggml_vdotq_s32(acc_lo[2], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_2, m4b), hbit_lo_2)), q8_qs[2]);
-                    acc_lo[2] = ggml_vdotq_s32(acc_lo[2], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_3, m4b), hbit_lo_3)), q8_qs[3]);
-                    acc_hi[2] = ggml_vdotq_s32(acc_hi[2], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_0, 4), hbit_hi_0)), q8_qs[4]);
-                    acc_hi[2] = ggml_vdotq_s32(acc_hi[2], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_1, 4), hbit_hi_1)), q8_qs[5]);
-                    acc_hi[2] = ggml_vdotq_s32(acc_hi[2], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_2, 4), hbit_hi_2)), q8_qs[6]);
-                    acc_hi[2] = ggml_vdotq_s32(acc_hi[2], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_3, 4), hbit_hi_3)), q8_qs[7]);
+                    acc_lo[2] = ggml_vdotq_s32(acc_lo[2], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_0, m4b), hbit_lo_0)),
+                                               q8_qs[0]);
+                    acc_lo[2] = ggml_vdotq_s32(acc_lo[2], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_1, m4b), hbit_lo_1)),
+                                               q8_qs[1]);
+                    acc_lo[2] = ggml_vdotq_s32(acc_lo[2], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_2, m4b), hbit_lo_2)),
+                                               q8_qs[2]);
+                    acc_lo[2] = ggml_vdotq_s32(acc_lo[2], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_3, m4b), hbit_lo_3)),
+                                               q8_qs[3]);
+                    acc_hi[2] = ggml_vdotq_s32(acc_hi[2], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_0, 4), hbit_hi_0)),
+                                               q8_qs[4]);
+                    acc_hi[2] = ggml_vdotq_s32(acc_hi[2], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_1, 4), hbit_hi_1)),
+                                               q8_qs[5]);
+                    acc_hi[2] = ggml_vdotq_s32(acc_hi[2], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_2, 4), hbit_hi_2)),
+                                               q8_qs[6]);
+                    acc_hi[2] = ggml_vdotq_s32(acc_hi[2], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_3, 4), hbit_hi_3)),
+                                               q8_qs[7]);
 
                     // Cols 45
                     qs_0 = vld1q_u8(qs_base + 48);
@@ -989,14 +1013,22 @@ void ggml_gemv_q5_K_8x8_q8_K(int                        n,
                     qh[3][2] = vshrq_n_u8(qh[3][2], 2);
                     qh[3][3] = vshrq_n_u8(qh[3][3], 2);
 
-                    acc_lo[3] = ggml_vdotq_s32(acc_lo[3], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_0, m4b), hbit_lo_0)), q8_qs[0]);
-                    acc_lo[3] = ggml_vdotq_s32(acc_lo[3], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_1, m4b), hbit_lo_1)), q8_qs[1]);
-                    acc_lo[3] = ggml_vdotq_s32(acc_lo[3], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_2, m4b), hbit_lo_2)), q8_qs[2]);
-                    acc_lo[3] = ggml_vdotq_s32(acc_lo[3], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_3, m4b), hbit_lo_3)), q8_qs[3]);
-                    acc_hi[3] = ggml_vdotq_s32(acc_hi[3], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_0, 4), hbit_hi_0)), q8_qs[4]);
-                    acc_hi[3] = ggml_vdotq_s32(acc_hi[3], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_1, 4), hbit_hi_1)), q8_qs[5]);
-                    acc_hi[3] = ggml_vdotq_s32(acc_hi[3], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_2, 4), hbit_hi_2)), q8_qs[6]);
-                    acc_hi[3] = ggml_vdotq_s32(acc_hi[3], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_3, 4), hbit_hi_3)), q8_qs[7]);
+                    acc_lo[3] = ggml_vdotq_s32(acc_lo[3], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_0, m4b), hbit_lo_0)),
+                                               q8_qs[0]);
+                    acc_lo[3] = ggml_vdotq_s32(acc_lo[3], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_1, m4b), hbit_lo_1)),
+                                               q8_qs[1]);
+                    acc_lo[3] = ggml_vdotq_s32(acc_lo[3], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_2, m4b), hbit_lo_2)),
+                                               q8_qs[2]);
+                    acc_lo[3] = ggml_vdotq_s32(acc_lo[3], vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_3, m4b), hbit_lo_3)),
+                                               q8_qs[3]);
+                    acc_hi[3] = ggml_vdotq_s32(acc_hi[3], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_0, 4), hbit_hi_0)),
+                                               q8_qs[4]);
+                    acc_hi[3] = ggml_vdotq_s32(acc_hi[3], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_1, 4), hbit_hi_1)),
+                                               q8_qs[5]);
+                    acc_hi[3] = ggml_vdotq_s32(acc_hi[3], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_2, 4), hbit_hi_2)),
+                                               q8_qs[6]);
+                    acc_hi[3] = ggml_vdotq_s32(acc_hi[3], vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_3, 4), hbit_hi_3)),
+                                               q8_qs[7]);
                 }
 
                 // Iterates over a pair of column pairs (4 columns) to use a single 128 register
@@ -1042,6 +1074,33 @@ void ggml_gemv_q5_K_8x8_q8_K(int                        n,
     return;
 #endif  // defined(__aarch64__) && defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
     ggml_gemv_q5_K_8x8_q8_K_generic(n, s, bs, vx, vy, nr, nc);
+}
+
+void ggml_gemv_q6_K_8x8_q8_K(int                        n,
+                             float * GGML_RESTRICT      s,
+                             size_t                     bs,
+                             const void * GGML_RESTRICT vx,
+                             const void * GGML_RESTRICT vy,
+                             int                        nr,
+                             int                        nc) {
+    constexpr int qk = QK_K;
+    const int     nb = n / qk;
+
+    constexpr int ncols_interleaved = 8;
+    constexpr int blocklen          = 8;
+
+    assert(n % qk == 0);
+    assert(nc % ncols_interleaved == 0);
+
+    UNUSED(nb);
+    UNUSED(ncols_interleaved);
+    UNUSED(blocklen);
+
+#if defined(__aarch64__) && defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    GGML_ABORT("ggml_gemv_q6_K_8x8_q8_K: ARM NEON DOTPROD implementation not yet available");
+    return;
+#endif  // defined(__aarch64__) && defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    ggml_gemv_q6_K_8x8_q8_K_generic(n, s, bs, vx, vy, nr, nc);
 }
 
 void ggml_gemv_q8_0_4x4_q8_0(int                        n,
@@ -3129,12 +3188,12 @@ void ggml_gemm_q5_K_8x8_q8_K(int                        n,
                         const int8x16_t q5_nibbles[2][4] = {
                             {
                              vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_cp_0, m4b), hbit_lo_0)),
-                             vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_cp_1, m4b), hbit_lo_1)),
-                             vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_cp_2, m4b), hbit_lo_2)),
-                             vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_cp_3, m4b), hbit_lo_3)),
+                             vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_cp_1,                                                   m4b),                                                                                        hbit_lo_1)),
+                             vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_cp_2,       m4b),        hbit_lo_2)),
+                             vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs_cp_3,       m4b),        hbit_lo_3)),
                              },
                             {
-                             vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_cp_0, 4), hbit_hi_0)),
+                             vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_cp_0,                                             4),                                                                                 hbit_hi_0)),
                              vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_cp_1, 4), hbit_hi_1)),
                              vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_cp_2, 4), hbit_hi_2)),
                              vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs_cp_3, 4), hbit_hi_3)),
@@ -3235,6 +3294,33 @@ void ggml_gemm_q5_K_8x8_q8_K(int                        n,
     return;
 #endif  // defined(__aarch64__) && defined(__ARM_NEON) && defined(__ARM_FEATURE_MATMUL_INT8)
     ggml_gemm_q5_K_8x8_q8_K_generic(n, s, bs, vx, vy, nr, nc);
+}
+
+void ggml_gemm_q6_K_8x8_q8_K(int                        n,
+                             float * GGML_RESTRICT      s,
+                             size_t                     bs,
+                             const void * GGML_RESTRICT vx,
+                             const void * GGML_RESTRICT vy,
+                             int                        nr,
+                             int                        nc) {
+    constexpr int qk = QK_K;
+    const int     nb = n / qk;
+
+    constexpr int ncols_interleaved = 8;
+    constexpr int blocklen          = 8;
+
+    assert(n % qk == 0);
+    assert(nc % ncols_interleaved == 0);
+
+    UNUSED(nb);
+    UNUSED(ncols_interleaved);
+    UNUSED(blocklen);
+
+#if defined(__aarch64__) && defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    GGML_ABORT("ggml_gemm_q6_K_8x8_q8_K: NEON+MATMUL_INT8 implementation not available yet");
+    return;
+#endif  // defined(__aarch64__) && defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    ggml_gemm_q6_K_8x8_q8_K_generic(n, s, bs, vx, vy, nr, nc);
 }
 
 void ggml_gemm_q8_0_4x4_q8_0(int                        n,
