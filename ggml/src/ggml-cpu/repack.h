@@ -54,12 +54,12 @@ struct block_q2_Kx8 {
 
 static_assert(sizeof(block_q2_Kx8) == sizeof(ggml_half) * 16 + QK_K/2 + QK_K * 2, "wrong q2_K block size/padding");
 
-typedef struct {
+struct block_q6_Kx8{
     ggml_half d[8];
     int8_t    scales[QK_K / 16 * 8];
     uint8_t   ql[QK_K / 2 * 8];  // low bits of 6-bit quants (groups of 2)
     uint8_t   qh[QK_K / 4 * 8];  // high bits of 6-bit quants (groups of 4)
-} block_q6_Kx8;
+};
 
 static_assert(sizeof(block_q6_Kx8) == sizeof(ggml_half) * 8 + QK_K / 16 * 8 + 3 * QK_K / 4 * 8,
               "wrong q6_K block size/padding");
